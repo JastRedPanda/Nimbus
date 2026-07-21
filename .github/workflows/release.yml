@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=${{ github.ref_name }} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%%m.%%Y)" -o nimbus.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nimbus-windows
+          path: nimbus.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev dpkg-dev rpm
+      - name: Build binary
+        run: |
+          VER="${{ github.ref_name }}"
+          go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER#v} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
+      - name: Build .deb
+        run: |
+          mkdir -p dist/debian/nimbus/DEBIAN
+          mkdir -p dist/debian/nimbus/usr/bin
+          mkdir -p dist/debian/nimbus/usr/share/applications
+          install -m 755 nimbus dist/debian/nimbus/usr/bin/
+          install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
+          install -m 644 dist/debian/control dist/debian/nimbus/DEBIAN/
+          dpkg-deb --build dist/debian/nimbus "dist/nimbus_$(echo ${{ github.ref_name }} | sed 's/^v//')-1_amd64.deb"
+      - name: Build .rpm
+        run: |
+          mkdir -p dist/rpm/BUILD dist/rpm/RPMS dist/rpm/SRPMS
+          sed "s/^Version:.*/Version: $(echo ${{ github.ref_name }} | sed 's/^v//')/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
+          rpmbuild -bb --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>/dev/null || true
+          # rpmbuild may print errors but still produce the rpm
+          find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nimbus-linux
+          path: |
+            dist/nimbus_*.deb
+            dist/nimbus-*.rpm
+            nimbus
+
+  publish:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nimbus-windows
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: nimbus-linux
+          path: artifacts
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts
+          FILES=$(find . -type f | tr '\n' ' ')
+          gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
