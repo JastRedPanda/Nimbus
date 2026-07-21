@@ -27,7 +27,7 @@ system tray. Features 7-day forecast, configurable units, themes,
 and language support (English/Українська).
 
 %prep
-%setup -q -n build-rpm
+mkdir -p build-rpm
 
 %build
 echo "Binary built separately in workflow"
