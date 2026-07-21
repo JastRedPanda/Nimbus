@@ -60,4 +60,4 @@ Uses [Open-Meteo](https://open-meteo.com/) — free, no API key required.
 
 ## License
 
-MIT
+GNU General Public License v3.0
