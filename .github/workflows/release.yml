@@ -125,6 +125,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+    continue-on-error: true
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
