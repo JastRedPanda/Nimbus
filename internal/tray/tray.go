@@ -85,10 +85,24 @@ func (a *app) fetchAndUpdate() {
 		systray.SetIcon(icon)
 	}
 
-	systray.SetTitle(tempStr(temp, a.cfg.Units))
-	systray.SetTooltip(a.lang.Tooltip(data.Emoji(), data.WeatherCode,
-		temp, apparent, int(data.Humidity), data.WindSpeed,
-		data.SurfacePressure, a.cfg.Units, a.cfg.PressureUnit))
+	ts := tooltipLine(temp, a.cfg.Units, data.WeatherCode)
+	detail := a.lang.Tooltip("", data.WeatherCode, temp, apparent,
+		int(data.Humidity), data.WindSpeed, data.SurfacePressure,
+		a.cfg.Units, a.cfg.PressureUnit)
+	systray.SetTooltip(ts + "\n" + detail)
+}
+
+func tooltipLine(temp float64, unitCfg string, code int) string {
+	sym := "°C"
+	if unitCfg == "fahrenheit" {
+		sym = "°F"
+	}
+	t := int(math.Round(temp))
+	sign := ""
+	if t > 0 {
+		sign = "+"
+	}
+	return fmt.Sprintf("Nimbus — %s%d%s", sign, t, sym)
 }
 
 func (a *app) openForecast() {
@@ -164,16 +178,4 @@ func (a *app) openURL(url string) {
 	default:
 		exec.Command("xdg-open", url).Start()
 	}
-}
-
-func tempStr(temp float64, unitCfg string) string {
-	sym := "°C"
-	if unitCfg == "fahrenheit" {
-		sym = "°F"
-	}
-	t := int(math.Round(temp))
-	if t > 0 {
-		return "+" + fmt.Sprintf("%d%s", t, sym)
-	}
-	return fmt.Sprintf("%d%s", t, sym)
 }
