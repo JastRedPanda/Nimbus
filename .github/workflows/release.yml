@@ -141,8 +141,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           VERSION=${RELEASE_TAG#v}
+
+          # First, create the package if it doesn't exist
+          echo "Ensuring package 'nimbus' exists..."
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/$OWNER/$REPO/packages \
+            -f package_name="nimbus" \
+            -f package_type="generic" \
+            -f visibility="public" \
+            2>/dev/null || echo "Package may already exist, continuing..."
 
           # Create package version
           echo "Creating package version $VERSION..."
@@ -151,7 +163,7 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             /repos/$OWNER/$REPO/packages/generic/nimbus/versions \
             -f version_name="$VERSION" \
-            -f visibility="public" 2>/dev/null || echo "Version may already exist, continuing..."
+            2>/dev/null || echo "Version may already exist, continuing..."
 
           # Upload each package file
           find artifacts -type f \( -name "*.deb" -o -name "*.rpm" \) | while read file; do
