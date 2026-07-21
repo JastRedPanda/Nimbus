@@ -65,7 +65,7 @@ jobs:
           mkdir -p dist/rpm/BUILD/build-rpm dist/rpm/RPMS dist/rpm/SRPMS
           cp nimbus dist/rpm/BUILD/build-rpm/
           sed "s/^Version:.*/Version: ${VERSION}/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
-          rpmbuild -bb --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>&1 || true
+          rpmbuild -bb --nodeps --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>&1 || true
           find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \; 2>/dev/null || true
       - name: Sign packages
         run: |
