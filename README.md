@@ -1,29 +1,32 @@
-# Nimbus v1.0.0
+# Nimbus
 
-**Інформер погоди в системному треї** | **Weather tray app**
+**Weather tray app** | **Інформер погоди в системному треї**
 
-Cross-platform: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).
-
+Cross-platform: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).  
 Languages: English, Українська
 
 ## Features / Можливості
 
 - Weather in system tray with temperature + weather icon / Погода в треї з температурою та іконкою
-- **7-day Forecast** — opens in browser / Прогноз на 7 днів у браузері
-- **Settings window** (Windows) — city, units, theme, language / Вікно налаштувань
+- **7-day Forecast** popup window (Windows) / Спливаюче вікно прогнозу на 7 днів (Windows)
+- **Settings GUI** (Windows) — city, units, theme, language, font scale, update interval / Вікно налаштувань з графічним інтерфейсом
 - Temperature unit: °C / °F
 - Pressure unit: hPa / mmHg / inHg
+- Wind unit: m/s / km/h
+- Font scale: slider 1–100% for tray text
+- Update interval: 5 min – 24 hours
 - Icon theme: Auto (temperature color) / Dark / Light
 - Language: English / Українська
 - No console window (Windows)
+- Embedded weather icon font — no external dependencies
 
-## Download
+## Download / Завантажити
 
 Pre-built binaries: [Releases](https://github.com/JastRedPanda/Nimbus/releases)
 
-## Build from source
+## Build from source / Збірка з вихідного коду
 
-### Requirements
+### Requirements / Вимоги
 - Go 1.21+
 
 ### Windows
@@ -51,14 +54,29 @@ Just run the binary — it appears in the system tray.
 | **Tray icon** | Shows weather symbol colored by temperature |
 | **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
-| **Click** → **7-day Forecast** | Opens Open-Meteo forecast in browser |
-| **Right-click** → **Settings...** | Opens settings window (Windows: PowerShell GUI / other: config file) |
-| **Right-click** → **About** | Opens GitHub page |
-| **Right-click** → **Quit** | Exits app |
+| **Left-click** | Opens **7-day Forecast** popup (Windows) |
+| **Right-click → Forecast** | Opens forecast in browser (Linux) |
+| **Right-click → Settings...** | Opens **Settings GUI** (Windows: native window / Linux: opens config file) |
+| **Right-click → Refresh now** | Forces weather update |
+| **Right-click → About** | Opens GitHub page |
+| **Right-click → Quit** | Exits app |
 
-### Configuration
+### Settings window / Вікно налаштувань
 
-Auto-created at first run:
+- City search with autocomplete / Пошук міста з автодоповненням
+- Manual lat/lon entry / Ручне введення координат
+- Temperature, pressure, wind unit selection / Вибір одиниць вимірювання
+- Icon theme (Auto/Dark/Light) / Тема іконок
+- Language switch / Перемикання мови
+- Font scale slider (1–100%) / Слайдер масштабу шрифту
+- Update interval dropdown (5 min – 24 h) / Вибір інтервалу оновлення
+- Dark mode support (Windows) / Підтримка темної теми
+
+### Configuration / Конфігурація
+
+Auto-created at first run:  
+Автоматично створюється при першому запуску:
+
 - **Windows**: `%APPDATA%\Nimbus\config.json`
 - **Linux**: `~/.config/nimbus/config.json`
 
@@ -70,24 +88,28 @@ Auto-created at first run:
   "update_interval": 10,
   "units": "celsius",
   "pressure_unit": "hpa",
+  "wind_unit": "ms",
   "icon_theme": "auto",
-  "language": "en"
+  "language": "en",
+  "font_scale": 100
 }
 ```
 
 | Field | Values | Description |
 |---|---|---|
-| `latitude`, `longitude` | float | Coordinates |
-| `city_name` | string | Display name |
-| `update_interval` | int (minutes) | Refresh interval (min 1) |
-| `units` | `celsius` / `fahrenheit` | Temperature unit |
-| `pressure_unit` | `hpa` / `mmhg` / `inhg` | Pressure unit |
-| `icon_theme` | `auto` / `dark` / `light` | Icon theme |
-| `language` | `en` / `uk` | UI language |
+| `latitude`, `longitude` | float | Coordinates / Координати |
+| `city_name` | string | Display name / Назва міста |
+| `update_interval` | int (minutes) | Refresh interval / Інтервал оновлення (хв) |
+| `units` | `celsius` / `fahrenheit` | Temperature unit / Одиниця температури |
+| `pressure_unit` | `hpa` / `mmhg` / `inhg` | Pressure unit / Одиниця тиску |
+| `wind_unit` | `ms` / `kmh` | Wind unit / Одиниця вітру |
+| `icon_theme` | `auto` / `dark` / `light` | Icon theme / Тема іконок |
+| `language` | `en` / `uk` | UI language / Мова інтерфейсу |
+| `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
 
 ## Weather API
 
-Uses [Open-Meteo](https://open-meteo.com/) — free, no API key required.
+Uses [Open-Meteo](https://open-meteo.com/) — free, no API key required.  
 IP geolocation via [ip-api.com](http://ip-api.com/).
 
 ## License
