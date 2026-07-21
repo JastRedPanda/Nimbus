@@ -105,7 +105,13 @@ jobs:
           cd artifacts
           # Only upload actual distributables: Windows .exe, Linux binary, .deb, .rpm
           FILES=$(find . -type f \( -name "*.exe" -o -name "nimbus" -o -name "*.deb" -o -name "*.rpm" \) ! -name "*.asc" | tr '\n' ' ')
-          gh release create "${{ github.ref_name }}" --repo ${{ github.repository }} --title "${{ github.ref_name }}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
+          # Skip if release already exists
+          if gh release view "${{ github.ref_name }}" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release ${{ github.ref_name }} already exists, uploading assets..."
+            gh release upload "${{ github.ref_name }}" $FILES --repo ${{ github.repository }} --clobber
+          else
+            gh release create "${{ github.ref_name }}" --repo ${{ github.repository }} --title "${{ github.ref_name }}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
+          fi
 
   publish-packages:
     needs: [build-windows, build-linux]
@@ -131,14 +137,37 @@ jobs:
         run: |
           VERSION=${VERSION#v}
 
-          # Only upload actual package files (.deb, .rpm), not signatures/keys
+          # Create package version if it doesn't exist
+          echo "Creating package version $VERSION..."
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/$OWNER/$REPO/packages/generic/nimbus/versions \
+            -f version_name="$VERSION" \
+            -f package_name="nimbus" \
+            -f visibility="public" 2>/dev/null || echo "Version may already exist, continuing..."
+
+          # Upload each package file
           find artifacts -type f \( -name "*.deb" -o -name "*.rpm" \) | while read file; do
             filename=$(basename "$file")
             echo "Uploading $filename to GitHub Packages..."
-            gh api --method POST \
+            
+            # Get upload URL for this file
+            upload_url=$(gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
+              --method POST \
               /repos/$OWNER/$REPO/packages/generic/nimbus/$VERSION/$filename \
-              --input "$file" \
-              --header "Content-Type: application/octet-stream"
+              --jq '.upload_url')
+            
+            if [ -n "$upload_url" ] && [ "$upload_url" != "null" ]; then
+              curl -X PUT \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @"$file" \
+                "$upload_url"
+              echo "Uploaded $filename"
+            else
+              echo "Failed to get upload URL for $filename"
+            fi
           done
