@@ -1,4 +1,4 @@
-package weather
+﻿package weather
 
 import (
 	"encoding/json"
@@ -93,36 +93,36 @@ func (w *WeatherData) Condition() string {
 func (w *WeatherData) Emoji() string {
 	switch {
 	case w.WeatherCode == 0:
-		return "☀️"
+		return "\u2600\ufe0f"
 	case w.WeatherCode <= 2:
-		return "⛅"
+		return "\u26c5"
 	case w.WeatherCode == 3:
-		return "☁️"
+		return "\u2601\ufe0f"
 	case w.WeatherCode == 45 || w.WeatherCode == 48:
-		return "🌫️"
+		return "\U0001f32b\ufe0f"
 	case w.WeatherCode >= 51 && w.WeatherCode <= 55:
-		return "🌦️"
+		return "\U0001f326\ufe0f"
 	case w.WeatherCode >= 61 && w.WeatherCode <= 65:
-		return "🌧️"
+		return "\U0001f327\ufe0f"
 	case w.WeatherCode >= 71 && w.WeatherCode <= 77:
-		return "❄️"
+		return "\u2744\ufe0f"
 	case w.WeatherCode >= 80 && w.WeatherCode <= 82:
-		return "🌧️"
+		return "\U0001f327\ufe0f"
 	case w.WeatherCode >= 85 && w.WeatherCode <= 86:
-		return "🌨️"
+		return "\U0001f328\ufe0f"
 	case w.WeatherCode >= 95:
-		return "⛈️"
+		return "\u26c8\ufe0f"
 	default:
-		return "🌡️"
+		return "\U0001f321\ufe0f"
 	}
 }
 
 func (w *WeatherData) Tooltip() string {
-	return fmt.Sprintf("%s %.1f°C | %s | Feels %.1f°C | 💧%d%% | 💨%.0f km/h",
+	return fmt.Sprintf("%s %.1f\u00b0C | %s | Feels %.1f\u00b0C | \U0001f4a7%d%% | \U0001f4a8%.0f km/h",
 		w.Emoji(), w.Temperature, w.Condition(), w.ApparentTemp,
 		int(w.Humidity), w.WindSpeed)
 }
 
 func (w *WeatherData) Short() string {
-	return fmt.Sprintf("%.1f°C %s", w.Temperature, w.Emoji())
+	return fmt.Sprintf("%.1f\u00b0C %s", w.Temperature, w.Emoji())
 }

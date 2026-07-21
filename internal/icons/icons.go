@@ -1,4 +1,4 @@
-package icons
+﻿package icons
 
 import (
 	"bytes"
@@ -38,7 +38,6 @@ func Generate(temp float64, weatherCode int) []byte {
 	r := size/2 - 1
 
 	fillCircle(icon, cx, cy, r, bg)
-
 	drawCircle(icon, cx, cy, r, white)
 
 	switch {

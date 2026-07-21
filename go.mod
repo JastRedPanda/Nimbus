@@ -1,4 +1,4 @@
-module github.com/Lrt/Nimbus
+module github.com/JastRedPanda/Nimbus
 
 go 1.26.5
 
