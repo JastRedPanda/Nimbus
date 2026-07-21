@@ -26,7 +26,7 @@ jobs:
       - name: Build binary
         shell: bash
         run: |
-          VER="${{ github.ref_name }}"
+          VER="${{ github.event.inputs.tag || github.ref_name }}"
           VER="${VER#v}"
           go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus.exe .
       - uses: actions/upload-artifact@v4
@@ -48,20 +48,24 @@ jobs:
           gpg --armor --export nimbus-ci > public.key
       - name: Build binary
         run: |
-          VER="${{ github.ref_name }}"
-          go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER#v} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
+          VER="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${VER#v}"
+          go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
       - name: Build .deb
         run: |
+          VER="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${VER#v}"
           mkdir -p dist/debian/nimbus/DEBIAN
           mkdir -p dist/debian/nimbus/usr/bin
           mkdir -p dist/debian/nimbus/usr/share/applications
           install -m 755 nimbus dist/debian/nimbus/usr/bin/
           install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
           install -m 644 dist/debian/control dist/debian/nimbus/DEBIAN/
-          dpkg-deb --build dist/debian/nimbus "dist/nimbus_$(echo ${{ github.ref_name }} | sed 's/^v//')-1_amd64.deb"
+          dpkg-deb --build dist/debian/nimbus "dist/nimbus_${VER}-1_amd64.deb"
       - name: Build .rpm
         run: |
-          VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+          VER="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${VER#v}"
           mkdir -p dist/rpm/BUILD/build-rpm dist/rpm/RPMS dist/rpm/SRPMS
           cp nimbus dist/rpm/BUILD/build-rpm/
           sed "s/^Version:.*/Version: ${VERSION}/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
@@ -89,6 +93,8 @@ jobs:
   publish:
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -106,11 +112,11 @@ jobs:
           # Only upload actual distributables: Windows .exe, Linux binary, .deb, .rpm
           FILES=$(find . -type f \( -name "*.exe" -o -name "nimbus" -o -name "*.deb" -o -name "*.rpm" \) ! -name "*.asc" | tr '\n' ' ')
           # Skip if release already exists
-          if gh release view "${{ github.ref_name }}" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release ${{ github.ref_name }} already exists, uploading assets..."
-            gh release upload "${{ github.ref_name }}" $FILES --repo ${{ github.repository }} --clobber
+          if gh release view "${RELEASE_TAG}" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release ${RELEASE_TAG} already exists, uploading assets..."
+            gh release upload "${RELEASE_TAG}" $FILES --repo ${{ github.repository }} --clobber
           else
-            gh release create "${{ github.ref_name }}" --repo ${{ github.repository }} --title "${{ github.ref_name }}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
+            gh release create "${RELEASE_TAG}" --repo ${{ github.repository }} --title "${RELEASE_TAG}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
           fi
 
   publish-packages:
@@ -119,6 +125,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -133,9 +141,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
-          VERSION: ${{ github.ref_name }}
         run: |
-          VERSION=${VERSION#v}
+          VERSION=${RELEASE_TAG#v}
 
           # Create package version
           echo "Creating package version $VERSION..."
