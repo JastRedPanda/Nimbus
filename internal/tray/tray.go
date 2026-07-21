@@ -9,13 +9,12 @@ import (
 	"runtime"
 
 	"github.com/JastRedPanda/Nimbus/internal/config"
+	"github.com/JastRedPanda/Nimbus/internal/forecast"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/icons"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/getlantern/systray"
 )
-
-var buildDate = "07.2026"
 
 type app struct {
 	cfg  *config.Config
@@ -38,7 +37,7 @@ func (a *app) ready() {
 	}
 	systray.SetTooltip("Nimbus — loading...")
 
-	a.mForecast = systray.AddMenuItem("7-day Forecast", "Open 7-day forecast in browser")
+	a.mForecast = systray.AddMenuItem("7-day Forecast", "Open 7-day forecast")
 	systray.AddSeparator()
 	a.mSettings = systray.AddMenuItem("Settings...", "Configure Nimbus")
 	systray.AddSeparator()
@@ -53,7 +52,7 @@ func (a *app) handleMenu() {
 	for {
 		select {
 		case <-a.mForecast.ClickedCh:
-			a.openForecast()
+			forecast.Show(a.cfg.Latitude, a.cfg.Longitude, a.cfg.Units, a.cfg.Language)
 		case <-a.mSettings.ClickedCh:
 			a.openSettings()
 		case <-a.mAbout.ClickedCh:
@@ -105,12 +104,6 @@ func tooltipLine(temp float64, unitCfg string, code int) string {
 	return fmt.Sprintf("Nimbus — %s%d%s", sign, t, sym)
 }
 
-func (a *app) openForecast() {
-	url := fmt.Sprintf("https://open-meteo.com/en/weather?latitude=%.4f&longitude=%.4f",
-		a.cfg.Latitude, a.cfg.Longitude)
-	a.openURL(url)
-}
-
 func (a *app) openSettings() {
 	path, err := config.ConfigPath()
 	if err != nil {
@@ -130,6 +123,7 @@ func (a *app) openSettings() {
 		}
 		ps := settingsScript(shim, path)
 		cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
+		configureCmd(cmd)
 		out, err := cmd.Output()
 		if err == nil {
 			var nc config.Config

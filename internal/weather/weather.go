@@ -69,6 +69,62 @@ func Fetch(lat, lon float64) (*WeatherData, error) {
 	}, nil
 }
 
+type DailyForecast struct {
+	Date        string  `json:"date"`
+	TempMax     float64 `json:"temperature_2m_max"`
+	TempMin     float64 `json:"temperature_2m_min"`
+	WeatherCode int     `json:"weather_code"`
+	PrecipSum   float64 `json:"precipitation_sum"`
+	WindMax     float64 `json:"wind_speed_10m_max"`
+}
+
+type DailyResponse struct {
+	Daily struct {
+		Time      []string  `json:"time"`
+		TempMax   []float64 `json:"temperature_2m_max"`
+		TempMin   []float64 `json:"temperature_2m_min"`
+		Weather   []int     `json:"weather_code"`
+		PrecipSum []float64 `json:"precipitation_sum"`
+		WindMax   []float64 `json:"wind_speed_10m_max"`
+	} `json:"daily"`
+}
+
+func FetchDaily(lat, lon float64) ([]DailyForecast, error) {
+	urlStr := fmt.Sprintf(
+		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,wind_speed_10m_max&timezone=auto&forecast_days=7",
+		lat, lon,
+	)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("daily fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read daily failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daily API error %d: %s", resp.StatusCode, string(body))
+	}
+	var dr DailyResponse
+	if err := json.Unmarshal(body, &dr); err != nil {
+		return nil, fmt.Errorf("parse daily JSON failed: %w", err)
+	}
+	var out []DailyForecast
+	for i := range dr.Daily.Time {
+		out = append(out, DailyForecast{
+			Date:        dr.Daily.Time[i],
+			TempMax:     dr.Daily.TempMax[i],
+			TempMin:     dr.Daily.TempMin[i],
+			WeatherCode: dr.Daily.Weather[i],
+			PrecipSum:   dr.Daily.PrecipSum[i],
+			WindMax:     dr.Daily.WindMax[i],
+		})
+	}
+	return out, nil
+}
+
 func (w *WeatherData) Emoji() string {
 	switch {
 	case w.WeatherCode == 0:
