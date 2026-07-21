@@ -70,9 +70,9 @@ Auto-created at first run:
 
 ```json
 {
-  "latitude": 55.7558,
-  "longitude": 37.6173,
-  "city_name": "Moscow",
+  "latitude": 50.4501,
+  "longitude": 30.5234,
+  "city_name": "Kyiv",
   "update_interval": 10,
   "units": "celsius",
   "pressure_unit": "hpa",

@@ -21,9 +21,9 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		Latitude:       55.7558,
-		Longitude:      37.6173,
-		CityName:       "Moscow",
+		Latitude:       50.4501,
+		Longitude:      30.5234,
+		CityName:       "Kyiv",
 		UpdateInterval: 10,
 		Units:          "celsius",
 		PressureUnit:   "hpa",
