@@ -116,5 +116,3 @@ func sign(v float64) string {
 	}
 	return ""
 }
-
-

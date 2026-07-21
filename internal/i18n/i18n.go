@@ -299,15 +299,15 @@ func formatPressure(hPa float64, unit string, lang Lang) string {
 	}
 }
 
-func (l Lang) Tooltip(emoji string, weatherCode int, temp, apparent float64, humidity int, windSpeed, pressure float64, unit, pressureUnit string) string {
+func (l Lang) Tooltip(emoji string, weatherCode int, temp, apparent float64, humidity int, windSpeed, pressure float64, unit, pressureUnit, windUnit string) string {
 	sym := unitSymbol(unit)
 	cond := conditionEN(weatherCode)
-	windStr := formatWindEN(windSpeed)
+	windStr := formatWind(windSpeed, windUnit, EN)
 	pressureStr := formatPressure(pressure, pressureUnit, EN)
 
 	if l == UK {
 		cond = conditionUK(weatherCode)
-		windStr = formatWindUK(windSpeed)
+		windStr = formatWind(windSpeed, windUnit, UK)
 		pressureStr = formatPressure(pressure, pressureUnit, UK)
 		return fmt.Sprintf("%s %.0f%s | %s | Відчувається %.0f%s | 💧%d%% | 💨%s | %s",
 			emoji, temp, sym, cond, apparent, sym, humidity, windStr, pressureStr)
@@ -320,10 +320,205 @@ func (l Lang) WeatherLine(emoji string, temp float64, unit string) string {
 	return fmt.Sprintf("%.0f%s %s", temp, unitSymbol(unit), emoji)
 }
 
-func formatWindEN(speed float64) string {
-	return fmt.Sprintf("%.0f km/h", speed)
+func (l Lang) ForecastHeaders() []string {
+	if l == UK {
+		return []string{"День", "Погода", "Темп.", "Вітер", "Опади"}
+	}
+	return []string{"Day", "Condition", "Temp", "Wind", "Precip"}
 }
 
-func formatWindUK(speed float64) string {
-	return fmt.Sprintf("%.0f км/год", speed)
+func (l Lang) PrecipUnit() string {
+	if l == UK {
+		return "мм"
+	}
+	return "mm"
+}
+
+func (l Lang) WindUnit() string {
+	if l == UK {
+		return "км/год"
+	}
+	return "km/h"
+}
+
+func (l Lang) WindUnitCfg(windUnit string) string {
+	return l.WindUnitFromCfg(windUnit)
+}
+
+func (l Lang) TempUnit(unit string) string {
+	if unit == "fahrenheit" {
+		return "°F"
+	}
+	return "°C"
+}
+
+func (l Lang) ForecastTitle() string {
+	if l == UK {
+		return "Прогноз на 7 днів - Nimbus"
+	}
+	return "7-day Forecast - Nimbus"
+}
+
+func (l Lang) SettingsTitle() string {
+	if l == UK {
+		return "Налаштування Nimbus"
+	}
+	return "Nimbus Settings"
+}
+
+func (l Lang) TemperatureGroup() string {
+	if l == UK {
+		return "Температура"
+	}
+	return "Temperature"
+}
+
+func (l Lang) PressureGroup() string {
+	if l == UK {
+		return "Тиск"
+	}
+	return "Pressure"
+}
+
+func (l Lang) WindGroup() string {
+	if l == UK {
+		return "Вітер"
+	}
+	return "Wind"
+}
+
+func (l Lang) WindMS() string {
+	return "m/s"
+}
+
+func (l Lang) WindKMH() string {
+	if l == UK {
+		return "км/год"
+	}
+	return "km/h"
+}
+
+func (l Lang) ThemeGroup() string {
+	if l == UK {
+		return "Тема"
+	}
+	return "Icon Theme"
+}
+
+func (l Lang) LanguageGroup() string {
+	if l == UK {
+		return "Мова"
+	}
+	return "Language"
+}
+
+func (l Lang) UpdateInterval() string {
+	if l == UK {
+		return "Інтервал оновлення"
+	}
+	return "Update interval"
+}
+
+func (l Lang) FontScaleGroup() string {
+	if l == UK {
+		return "Розмір шрифту в треї"
+	}
+	return "Tray Font Size"
+}
+
+func (l Lang) FontScalePct() string {
+	if l == UK {
+		return "%"
+	}
+	return "%"
+}
+
+func (l Lang) CityLabel() string {
+	if l == UK {
+		return "Місто:"
+	}
+	return "City:"
+}
+
+func (l Lang) SearchBtn() string {
+	if l == UK {
+		return "Пошук"
+	}
+	return "Search"
+}
+
+func (l Lang) LatLabel() string {
+	if l == UK {
+		return "Широта:"
+	}
+	return "Latitude:"
+}
+
+func (l Lang) LonLabel() string {
+	if l == UK {
+		return "Довгота:"
+	}
+	return "Longitude:"
+}
+
+func (l Lang) SaveBtn() string {
+	if l == UK {
+		return "Зберегти"
+	}
+	return "Save"
+}
+
+func (l Lang) CancelBtn() string {
+	if l == UK {
+		return "Скасувати"
+	}
+	return "Cancel"
+}
+
+func (l Lang) DeleteCfgBtn() string {
+	if l == UK {
+		return "Видалити конфіг"
+	}
+	return "Delete config"
+}
+
+func (l Lang) NoResults() string {
+	if l == UK {
+		return "Немає результатів"
+	}
+	return "No results"
+}
+
+func (l Lang) WindUnitFromCfg(windUnit string) string {
+	if windUnit == "ms" {
+		return l.WindMS()
+	}
+	return l.WindKMH()
+}
+
+func (l Lang) WindUnitLabel(windUnit string) string {
+	unit := l.WindUnitFromCfg(windUnit)
+	if l == UK {
+		return "Вітер: " + unit
+	}
+	return "Wind: " + unit
+}
+
+func convertWind(speed float64, windUnit string) float64 {
+	if windUnit == "ms" {
+		return speed / 3.6
+	}
+	return speed
+}
+
+func windUnitLabel(windUnit string, l Lang) string {
+	if windUnit == "ms" {
+		return l.WindMS()
+	}
+	return l.WindKMH()
+}
+
+func formatWind(speed float64, windUnit string, l Lang) string {
+	s := convertWind(speed, windUnit)
+	return fmt.Sprintf("%.0f %s", s, windUnitLabel(windUnit, l))
 }

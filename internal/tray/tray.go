@@ -1,24 +1,23 @@
 ﻿package tray
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"os/exec"
 	"runtime"
 
 	"github.com/JastRedPanda/Nimbus/internal/config"
-	"github.com/JastRedPanda/Nimbus/internal/forecast"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/icons"
+	"github.com/JastRedPanda/Nimbus/internal/ui"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/getlantern/systray"
 )
 
 type app struct {
-	cfg  *config.Config
-	lang i18n.Lang
+	cfg      *config.Config
+	lang     i18n.Lang
+	lastData *weather.WeatherData
 
 	mForecast *systray.MenuItem
 	mSettings *systray.MenuItem
@@ -31,7 +30,7 @@ func Run(cfg *config.Config) {
 }
 
 func (a *app) ready() {
-	icon := icons.Generate(20, 0, "auto")
+	icon := icons.GenerateScale(20, 0, "auto", a.cfg.FontScale)
 	if icon != nil {
 		systray.SetIcon(icon)
 	}
@@ -52,7 +51,7 @@ func (a *app) handleMenu() {
 	for {
 		select {
 		case <-a.mForecast.ClickedCh:
-			forecast.Show(a.cfg.Latitude, a.cfg.Longitude, a.cfg.Units, a.cfg.Language)
+			a.showForecast()
 		case <-a.mSettings.ClickedCh:
 			a.openSettings()
 		case <-a.mAbout.ClickedCh:
@@ -71,7 +70,15 @@ func (a *app) fetchAndUpdate() {
 		systray.SetTooltip(fmt.Sprintf("Nimbus — error: %v", err))
 		return
 	}
+	a.lastData = data
+	a.updateIcon(a.cfg.FontScale)
+}
 
+func (a *app) updateIcon(fontScale int) {
+	if a.lastData == nil {
+		return
+	}
+	data := a.lastData
 	temp := data.Temperature
 	apparent := data.ApparentTemp
 	if a.cfg.Units == "fahrenheit" {
@@ -79,88 +86,33 @@ func (a *app) fetchAndUpdate() {
 		apparent = apparent*9/5 + 32
 	}
 
-	icon := icons.Generate(temp, data.WeatherCode, a.cfg.IconTheme)
+	icon := icons.GenerateScale(temp, data.WeatherCode, a.cfg.IconTheme, fontScale)
 	if icon != nil {
 		systray.SetIcon(icon)
 	}
 
-	ts := tooltipLine(temp, a.cfg.Units, data.WeatherCode)
 	detail := a.lang.Tooltip("", data.WeatherCode, temp, apparent,
 		int(data.Humidity), data.WindSpeed, data.SurfacePressure,
-		a.cfg.Units, a.cfg.PressureUnit)
-	systray.SetTooltip(ts + "\n" + detail)
+		a.cfg.Units, a.cfg.PressureUnit, a.cfg.WindUnit)
+	systray.SetTooltip(detail)
 }
 
-func tooltipLine(temp float64, unitCfg string, code int) string {
-	sym := "°C"
-	if unitCfg == "fahrenheit" {
-		sym = "°F"
-	}
-	t := int(math.Round(temp))
-	sign := ""
-	if t > 0 {
-		sign = "+"
-	}
-	return fmt.Sprintf("Nimbus — %s%d%s", sign, t, sym)
+func (a *app) showForecast() {
+	ui.ShowForecast(a.cfg.Latitude, a.cfg.Longitude, a.cfg.Units, a.cfg.Language, a.cfg.IconTheme, a.cfg.WindUnit)
 }
 
 func (a *app) openSettings() {
-	path, err := config.ConfigPath()
-	if err != nil {
-		log.Printf("Config path error: %v", err)
-		return
-	}
-
-	if runtime.GOOS == "windows" {
-		shim := &cfgShim{
-			CityName:     a.cfg.CityName,
-			Latitude:     a.cfg.Latitude,
-			Longitude:    a.cfg.Longitude,
-			Units:        a.cfg.Units,
-			PressureUnit: a.cfg.PressureUnit,
-			IconTheme:    a.cfg.IconTheme,
-			Language:     a.cfg.Language,
+	go func() {
+		nc := ui.ShowSettings(a.cfg, func(fs int) { a.updateIcon(fs) })
+		if nc == nil {
+			return
 		}
-		ps := settingsScript(shim, path)
-		cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
-		configureCmd(cmd)
-		out, err := cmd.Output()
-		if err == nil {
-			var nc config.Config
-			if e := json.Unmarshal(out, &nc); e == nil {
-				a.cfg.Latitude = nc.Latitude
-				a.cfg.Longitude = nc.Longitude
-				a.cfg.CityName = nc.CityName
-				if nc.Units != "" {
-					a.cfg.Units = nc.Units
-				}
-				if nc.PressureUnit != "" {
-					a.cfg.PressureUnit = nc.PressureUnit
-				}
-				if nc.IconTheme != "" {
-					a.cfg.IconTheme = nc.IconTheme
-				}
-				if nc.Language != "" {
-					a.cfg.Language = nc.Language
-				}
-				if a.cfg.Language != string(a.lang) {
-					a.lang = i18n.ParseLang(a.cfg.Language)
-				}
-				_ = a.cfg.Save()
-				a.fetchAndUpdate()
-				return
-			}
+		a.cfg = nc
+		if a.cfg.Language != string(a.lang) {
+			a.lang = i18n.ParseLang(a.cfg.Language)
 		}
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		exec.Command("notepad", path).Start()
-	case "darwin":
-		exec.Command("open", "-t", path).Start()
-	default:
-		exec.Command("xdg-open", path).Start()
-	}
+		a.fetchAndUpdate()
+	}()
 }
 
 func (a *app) openURL(url string) {

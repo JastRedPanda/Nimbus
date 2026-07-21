@@ -15,8 +15,10 @@ type Config struct {
 	UpdateInterval int     `json:"update_interval"`
 	Units          string  `json:"units"`
 	PressureUnit   string  `json:"pressure_unit"`
+	WindUnit       string  `json:"wind_unit"`
 	IconTheme      string  `json:"icon_theme"`
 	Language       string  `json:"language"`
+	FontScale      int     `json:"font_scale"`
 }
 
 func Default() *Config {
@@ -27,8 +29,10 @@ func Default() *Config {
 		UpdateInterval: 10,
 		Units:          "celsius",
 		PressureUnit:   "hpa",
+		WindUnit:       "ms",
 		IconTheme:      "auto",
 		Language:       "en",
+		FontScale:      100,
 	}
 }
 
@@ -92,6 +96,14 @@ func ConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "config.json"), nil
+}
+
+func Delete() error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
 func (c *Config) Interval() time.Duration {
