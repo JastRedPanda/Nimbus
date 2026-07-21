@@ -7,7 +7,7 @@ Languages: English, Українська
 
 ## Features / Можливості
 
-- Temperature text in system tray with color indicating weather / Текст температури в треї з кольором, що відповідає погоді
+- Temperature text in system tray / Текст температури в системному треї
 - **7-day Forecast** popup window (Windows) / Спливаюче вікно прогнозу на 7 днів (Windows)
 - **Settings GUI** (Windows) — city, units, theme, language, font scale, update interval / Вікно налаштувань з графічним інтерфейсом
 - Temperature unit: °C / °F
@@ -15,7 +15,7 @@ Languages: English, Українська
 - Wind unit: m/s / km/h
 - Font scale: slider 1–100% for tray text
 - Update interval: 5 min – 24 hours
-- Icon theme: Auto (temperature color) / Dark / Light
+- Icon theme: Dark / Light (for settings & forecast windows)
 - Language: English / Українська
 - No console window (Windows)
 
@@ -50,7 +50,7 @@ Just run the binary — it appears in the system tray.
 
 | Action | Result |
 |---|---|
-| **Tray text** | Temperature text with +/- sign colored by weather (e.g. `+15°C`) |
+| **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
 | **Left-click** | Opens **7-day Forecast** popup (Windows) |
 | **Right-click → Forecast** | Opens forecast in browser (Linux) |
@@ -64,7 +64,7 @@ Just run the binary — it appears in the system tray.
 - City search with autocomplete / Пошук міста з автодоповненням
 - Manual lat/lon entry / Ручне введення координат
 - Temperature, pressure, wind unit selection / Вибір одиниць вимірювання
-- Icon theme (Auto/Dark/Light) / Тема іконок
+- Window theme (Auto/Dark/Light) / Тема вікон
 - Language switch / Перемикання мови
 - Font scale slider (1–100%) / Слайдер масштабу шрифту
 - Update interval dropdown (5 min – 24 h) / Вибір інтервалу оновлення
@@ -101,7 +101,7 @@ Auto-created at first run:
 | `units` | `celsius` / `fahrenheit` | Temperature unit / Одиниця температури |
 | `pressure_unit` | `hpa` / `mmhg` / `inhg` | Pressure unit / Одиниця тиску |
 | `wind_unit` | `ms` / `kmh` | Wind unit / Одиниця вітру |
-| `icon_theme` | `auto` / `dark` / `light` | Icon theme / Тема іконок |
+| `icon_theme` | `auto` / `dark` / `light` | Window theme / Тема вікон |
 | `language` | `en` / `uk` | UI language / Мова інтерфейсу |
 | `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
 
