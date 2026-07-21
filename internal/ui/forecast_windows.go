@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -24,6 +25,11 @@ type fcsDlg struct {
 	bgBrush  win.HBRUSH
 	edBrush  win.HBRUSH
 }
+
+var (
+	forecastClassOnce sync.Once
+	forecastClassOK   bool
+)
 
 func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	data, err := weather.FetchDaily(lat, lon)
@@ -52,18 +58,25 @@ func (d *fcsDlg) run() {
 		return
 	}
 
-	cn := syscall.StringToUTF16("NimbusForecastClass")
-	wc := &win.WNDCLASSEX{
-		CbSize:        uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
-		Style:         win.CS_HREDRAW | win.CS_VREDRAW,
-		LpfnWndProc:   syscall.NewCallback(d.wndProc),
-		HInstance:     d.inst,
-		HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
-		HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
-		HbrBackground: win.COLOR_BTNFACE + 1,
-		LpszClassName: &cn[0],
-	}
-	if win.RegisterClassEx(wc) == 0 {
+	// Register window class once
+	forecastClassOnce.Do(func() {
+		cn := syscall.StringToUTF16("NimbusForecastClass")
+		wc := &win.WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
+			Style:         win.CS_HREDRAW | win.CS_VREDRAW,
+			LpfnWndProc:   syscall.NewCallback(d.wndProc),
+			HInstance:     d.inst,
+			HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
+			HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
+			HbrBackground: win.COLOR_BTNFACE + 1,
+			LpszClassName: &cn[0],
+		}
+		if win.RegisterClassEx(wc) != 0 {
+			forecastClassOK = true
+		}
+	})
+
+	if !forecastClassOK {
 		return
 	}
 
@@ -74,7 +87,7 @@ func (d *fcsDlg) run() {
 	fonts.Load()
 
 	d.hwnd = win.CreateWindowEx(
-		0, &cn[0], &title[0],
+		0, syscall.StringToUTF16Ptr("NimbusForecastClass"), &title[0],
 		win.WS_CAPTION|win.WS_SYSMENU|win.WS_THICKFRAME|win.WS_MAXIMIZEBOX|win.WS_VISIBLE,
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT, 640, 480, 0, 0, d.inst, nil,
 	)

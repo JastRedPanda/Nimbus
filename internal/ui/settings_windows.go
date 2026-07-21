@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -41,6 +42,11 @@ const (
 	TBM_CLEARTICS  = win.WM_USER + 9
 	TBM_SETTICFREQ = win.WM_USER + 20
 	TBM_SETBKCOLOR = win.WM_USER + 30
+)
+
+var (
+	settingsClassOnce sync.Once
+	settingsClassOK   bool
 )
 
 var intervals = []struct {
@@ -93,18 +99,25 @@ func (d *setDlg) run() {
 		return
 	}
 
-	cn := syscall.StringToUTF16("NimbusSettingsClass")
-	wc := &win.WNDCLASSEX{
-		CbSize:        uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
-		Style:         win.CS_HREDRAW | win.CS_VREDRAW,
-		LpfnWndProc:   syscall.NewCallback(d.wndProc),
-		HInstance:     d.inst,
-		HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
-		HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
-		HbrBackground: win.COLOR_BTNFACE + 1,
-		LpszClassName: &cn[0],
-	}
-	if win.RegisterClassEx(wc) == 0 {
+	// Register window class once
+	settingsClassOnce.Do(func() {
+		cn := syscall.StringToUTF16("NimbusSettingsClass")
+		wc := &win.WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
+			Style:         win.CS_HREDRAW | win.CS_VREDRAW,
+			LpfnWndProc:   syscall.NewCallback(d.wndProc),
+			HInstance:     d.inst,
+			HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
+			HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
+			HbrBackground: win.COLOR_BTNFACE + 1,
+			LpszClassName: &cn[0],
+		}
+		if win.RegisterClassEx(wc) != 0 {
+			settingsClassOK = true
+		}
+	})
+
+	if !settingsClassOK {
 		d.result <- nil
 		return
 	}
@@ -123,7 +136,7 @@ func (d *setDlg) run() {
 
 	title := syscall.StringToUTF16(d.lang.SettingsTitle())
 	d.hwnd = win.CreateWindowEx(
-		0, &cn[0], &title[0],
+		0, syscall.StringToUTF16Ptr("NimbusSettingsClass"), &title[0],
 		win.WS_CAPTION|win.WS_SYSMENU|win.WS_VISIBLE,
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT, int32(winW), int32(winH),
 		0, 0, d.inst, unsafe.Pointer(d),
