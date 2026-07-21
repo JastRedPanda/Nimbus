@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 
+	"github.com/JastRedPanda/Nimbus/internal/build"
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
@@ -24,11 +25,6 @@ var forecastContent string
 
 //go:embed about.html
 var aboutContent string
-
-var (
-	BuildVersion = "0.1.4"
-	BuildDate    = "07.2026"
-)
 
 var (
 	settingsTmpl = template.Must(template.New("settings").Parse(settingsContent))
@@ -102,8 +98,8 @@ func ShowAbout() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
 		aboutTmpl.Execute(w, map[string]string{
-			"Version": BuildVersion,
-			"Date":    BuildDate,
+			"Version": build.Version,
+			"Date":    build.Date,
 		})
 	})
 	http.Serve(l, mux)

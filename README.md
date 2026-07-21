@@ -50,12 +50,12 @@ sudo zypper install nimbus-1.0.0-1.x86_64.rpm
 
 ### Windows
 ```bash
-go build -ldflags="-s -w -H windowsgui" -o nimbus.exe .
+go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=0.1.4 -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus.exe .
 ```
 
 ### Linux
 ```bash
-CGO_ENABLED=1 go build -ldflags="-s -w" -o nimbus .
+CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=0.1.4 -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
 ```
 
 ### Build packages / Збірка пакетів
