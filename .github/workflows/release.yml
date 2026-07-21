@@ -73,7 +73,6 @@ jobs:
           # Signing just the .deb for now as a simple approach
           gpg --batch --passphrase '' --detach-sign --armor dist/*.deb
           # Sign RPM
-          mkdir -p ~/.rpmmacros
           echo "%_gpg_name nimbus-ci" > ~/.rpmmacros
           rpm --addsign dist/*.rpm
       - uses: actions/upload-artifact@v4
@@ -105,3 +104,43 @@ jobs:
           cd artifacts
           FILES=$(find . -type f | tr '\n' ' ')
           gh release create "${{ github.ref_name }}" --repo ${{ github.repository }} --title "${{ github.ref_name }}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
+
+  publish-packages:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nimbus-linux
+          path: artifacts/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: nimbus-windows
+          path: artifacts/windows
+      - name: Upload to GitHub Packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          # Используем версию из ref, если это тег
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # Убираем 'v' из версии, если она есть
+          VERSION=${VERSION#v}
+          
+          upload_file() {
+            local file=$1
+            local filename=$(basename $file)
+            curl -X PUT \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$file" \
+              "https://pkg.github.com/$OWNER/$REPO/generic/nimbus/$VERSION/$filename"
+          }
+
+          find artifacts -type f | while read file; do
+            upload_file "$file"
+          done
