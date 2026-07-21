@@ -7,7 +7,7 @@ Languages: English, Українська
 
 ## Features / Можливості
 
-- Weather in system tray with temperature + weather icon / Погода в треї з температурою та іконкою
+- Temperature text in system tray with color indicating weather / Текст температури в треї з кольором, що відповідає погоді
 - **7-day Forecast** popup window (Windows) / Спливаюче вікно прогнозу на 7 днів (Windows)
 - **Settings GUI** (Windows) — city, units, theme, language, font scale, update interval / Вікно налаштувань з графічним інтерфейсом
 - Temperature unit: °C / °F
@@ -18,7 +18,6 @@ Languages: English, Українська
 - Icon theme: Auto (temperature color) / Dark / Light
 - Language: English / Українська
 - No console window (Windows)
-- Embedded weather icon font — no external dependencies
 
 ## Download / Завантажити
 
@@ -51,8 +50,7 @@ Just run the binary — it appears in the system tray.
 
 | Action | Result |
 |---|---|
-| **Tray icon** | Shows weather symbol colored by temperature |
-| **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
+| **Tray text** | Temperature text with +/- sign colored by weather (e.g. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
 | **Left-click** | Opens **7-day Forecast** popup (Windows) |
 | **Right-click → Forecast** | Opens forecast in browser (Linux) |
