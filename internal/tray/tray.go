@@ -3,6 +3,7 @@
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/getlantern/systray"
 )
+
+var buildDate = "07.2026"
 
 type presetCity struct {
 	name string
@@ -42,9 +45,11 @@ type app struct {
 	cfg  *config.Config
 	lang i18n.Lang
 
+	mCity      *systray.MenuItem
 	mRefresh   *systray.MenuItem
 	mAutoDetect *systray.MenuItem
 	mEditCfg   *systray.MenuItem
+	mResetCfg  *systray.MenuItem
 
 	mTempUnit *systray.MenuItem
 	mPresUnit *systray.MenuItem
@@ -68,15 +73,16 @@ func (a *app) ready() {
 	a.mRefresh = systray.AddMenuItem(a.lang.Refresh(), a.lang.RefreshTooltip())
 	systray.AddSeparator()
 
-	mCity := systray.AddMenuItem(a.lang.City()+": "+a.cfg.CityName, "Change city")
-	a.mAutoDetect = mCity.AddSubMenuItem(a.lang.AutoDetect(), a.lang.AutoDetectTooltip())
-	mCity.AddSubMenuItem("", "")
+	a.mCity = systray.AddMenuItem(a.lang.City()+": "+a.cfg.CityName, "Change city")
+	a.mAutoDetect = a.mCity.AddSubMenuItem(a.lang.AutoDetect(), a.lang.AutoDetectTooltip())
+	a.mCity.AddSubMenuItem("", "")
 	for _, c := range presetCities {
-		item := mCity.AddSubMenuItem(c.name, fmt.Sprintf("%.4f, %.4f", c.lat, c.lon))
+		item := a.mCity.AddSubMenuItem(c.name, fmt.Sprintf("%.4f, %.4f", c.lat, c.lon))
 		a.mCitySub = append(a.mCitySub, item)
 	}
-	mCity.AddSubMenuItem("", "")
-	a.mEditCfg = mCity.AddSubMenuItem(a.lang.EditConfig(), a.lang.EditConfigTooltip())
+	a.mCity.AddSubMenuItem("", "")
+	a.mEditCfg = a.mCity.AddSubMenuItem(a.lang.EditConfig(), a.lang.EditConfigTooltip())
+	a.mResetCfg = a.mCity.AddSubMenuItem(a.lang.ResetConfig(), a.lang.ResetConfigTooltip())
 
 	systray.AddSeparator()
 
@@ -107,6 +113,9 @@ func (a *app) handleMenu() {
 
 		case <-a.mEditCfg.ClickedCh:
 			a.openConfig()
+
+		case <-a.mResetCfg.ClickedCh:
+			go a.resetConfig()
 
 		case <-a.mTempUnit.ClickedCh:
 			if a.cfg.Units == "celsius" {
@@ -157,7 +166,7 @@ func (a *app) handleMenu() {
 			a.fetchAndUpdate()
 
 		case <-a.mAbout.ClickedCh:
-			systray.SetTooltip("Nimbus — Weather tray app | github.com/JastRedPanda/Nimbus")
+			a.openURL("https://github.com/JastRedPanda/Nimbus")
 
 		case <-a.mQuit.ClickedCh:
 			systray.Quit()
@@ -169,11 +178,11 @@ func (a *app) handleMenu() {
 func (a *app) handleCityClicks() {
 	for i, c := range presetCities {
 		item := a.mCitySub[i]
-		go func(i int, c presetCity) {
+		go func(c presetCity) {
 			for range item.ClickedCh {
 				a.setCity(c.name, c.lat, c.lon)
 			}
-		}(i, c)
+		}(c)
 	}
 }
 
@@ -197,10 +206,13 @@ func (a *app) updateLoop() {
 func (a *app) updateMenuLabels() {
 	a.mRefresh.SetTitle(a.lang.Refresh())
 	a.mRefresh.SetTooltip(a.lang.RefreshTooltip())
+	a.mCity.SetTitle(a.lang.City() + ": " + a.cfg.CityName)
 	a.mAutoDetect.SetTitle(a.lang.AutoDetect())
 	a.mAutoDetect.SetTooltip(a.lang.AutoDetectTooltip())
 	a.mEditCfg.SetTitle(a.lang.EditConfig())
 	a.mEditCfg.SetTooltip(a.lang.EditConfigTooltip())
+	a.mResetCfg.SetTitle(a.lang.ResetConfig())
+	a.mResetCfg.SetTooltip(a.lang.ResetConfigTooltip())
 	a.mTempUnit.SetTitle(a.lang.UnitLabel(a.cfg.Units))
 	a.mPresUnit.SetTitle(a.lang.PressureUnitLabel(a.cfg.PressureUnit))
 	a.mPresUnit.SetTooltip(a.lang.PressureUnitTooltip())
@@ -233,6 +245,8 @@ func (a *app) fetchAndUpdate() {
 	systray.SetTooltip(a.lang.Tooltip(data.Emoji(), data.WeatherCode,
 		temp, apparent, int(data.Humidity), data.WindSpeed,
 		data.SurfacePressure, a.cfg.Units, a.cfg.PressureUnit))
+
+	systray.SetTitle(tempStr(temp, a.cfg.Units))
 }
 
 func (a *app) setLoadingIcon() {
@@ -274,4 +288,36 @@ func (a *app) openConfig() {
 	default:
 		exec.Command("xdg-open", path).Start()
 	}
+}
+
+func (a *app) resetConfig() {
+	path, err := config.ConfigPath()
+	if err == nil {
+		os.Remove(path)
+	}
+	exec.Command(os.Args[0]).Start()
+	systray.Quit()
+}
+
+func (a *app) openURL(url string) {
+	switch runtime.GOOS {
+	case "windows":
+		exec.Command("cmd", "/c", "start", url).Start()
+	case "darwin":
+		exec.Command("open", url).Start()
+	default:
+		exec.Command("xdg-open", url).Start()
+	}
+}
+
+func tempStr(temp float64, unitCfg string) string {
+	sym := "°C"
+	if unitCfg == "fahrenheit" {
+		sym = "°F"
+	}
+	t := int(temp)
+	if t > 0 {
+		return "+" + fmt.Sprintf("%d%s", t, sym)
+	}
+	return fmt.Sprintf("%d%s", t, sym)
 }

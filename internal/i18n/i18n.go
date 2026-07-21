@@ -211,6 +211,20 @@ func (l Lang) EditConfigTooltip() string {
 	return "Open configuration file"
 }
 
+func (l Lang) ResetConfig() string {
+	if l == UK {
+		return "Скинути налаштування"
+	}
+	return "Reset settings"
+}
+
+func (l Lang) ResetConfigTooltip() string {
+	if l == UK {
+		return "Видалити конфіг і перезапустити"
+	}
+	return "Delete config and restart"
+}
+
 func (l Lang) LanguageLabel(cur Lang) string {
 	if l == UK {
 		if cur == UK {

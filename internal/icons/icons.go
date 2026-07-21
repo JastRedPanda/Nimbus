@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"log"
 )
 
 func symbolColor(theme string, temp float64) color.RGBA {
@@ -13,198 +12,191 @@ func symbolColor(theme string, temp float64) color.RGBA {
 	case "dark":
 		return color.RGBA{220, 220, 230, 255}
 	case "light":
-		return color.RGBA{40, 40, 50, 255}
+		return color.RGBA{30, 30, 40, 255}
 	default:
-		return tempColor(temp, false)
+		return tempColor(temp)
 	}
 }
 
-func bgColor(theme string, temp float64) color.RGBA {
-	switch theme {
-	case "dark":
-		return color.RGBA{255, 255, 255, 30}
-	case "light":
-		return color.RGBA{0, 0, 0, 20}
-	default:
-		return tempColor(temp, true)
-	}
-}
-
-func tempColor(temp float64, dim bool) color.RGBA {
-	a := uint8(200)
-	if dim {
-		a = 70
-	}
+func tempColor(temp float64) color.RGBA {
 	switch {
 	case temp < -10:
-		return color.RGBA{30, 60, 180, a}
+		return color.RGBA{180, 200, 255, 255}
 	case temp < 0:
-		return color.RGBA{50, 100, 220, a}
+		return color.RGBA{100, 150, 255, 255}
 	case temp < 10:
-		return color.RGBA{100, 160, 255, a}
+		return color.RGBA{60, 120, 255, 255}
 	case temp < 20:
-		return color.RGBA{80, 200, 80, a}
+		return color.RGBA{80, 200, 80, 255}
 	case temp < 30:
-		return color.RGBA{240, 180, 40, a}
+		return color.RGBA{240, 180, 40, 255}
 	default:
-		return color.RGBA{220, 60, 50, a}
+		return color.RGBA{220, 60, 50, 255}
 	}
 }
 
 func Generate(temp float64, weatherCode int, theme string) []byte {
-	size := 32
-	icon := image.NewRGBA(image.Rect(0, 0, size, size))
-
-	cx, cy := size/2, size/2
-	r := size/2 - 2
-
-	fillCircle(icon, cx, cy, r, bgColor(theme, temp))
-	drawCircle(icon, cx, cy, r, symbolColor(theme, temp))
+	icon := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	cx, cy := 16, 16
 
 	sc := symbolColor(theme, temp)
-
-	switch {
-	case weatherCode == 0:
-		drawSun(icon, cx, cy, sc)
-	case weatherCode <= 3:
-		drawCloud(icon, cx, cy, sc, true)
-	case weatherCode >= 45 && weatherCode <= 48:
-		drawFog(icon, cx, cy, sc)
-	case weatherCode >= 51 && weatherCode <= 57:
-		drawRain(icon, cx, cy, sc, false)
-	case weatherCode >= 61 && weatherCode <= 65:
-		drawRain(icon, cx, cy, sc, true)
-	case weatherCode >= 71 && weatherCode <= 77:
-		drawSnow(icon, cx, cy, sc)
-	case weatherCode >= 80 && weatherCode <= 86:
-		drawRain(icon, cx, cy, sc, true)
-	case weatherCode >= 95:
-		drawStorm(icon, cx, cy, sc)
-	default:
-		drawCloud(icon, cx, cy, sc, false)
-	}
+	dim := color.RGBA{sc.R, sc.G, sc.B, 60}
+	drawSymbol(icon, cx, cy, weatherCode, sc, dim)
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, icon); err != nil {
-		log.Printf("Icon encoding error: %v", err)
 		return nil
 	}
 	return buf.Bytes()
 }
 
-func drawCircle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
-	for y := cy - r; y <= cy+r; y++ {
-		for x := cx - r; x <= cx+r; x++ {
-			dx, dy := x-cx, y-cy
-			dist := dx*dx + dy*dy
-			if dist > (r-1)*(r-1) && dist <= r*r {
-				if x >= 0 && x < img.Bounds().Dx() && y >= 0 && y < img.Bounds().Dy() {
-					img.Set(x, y, c)
-				}
-			}
-		}
+func drawSymbol(img *image.RGBA, cx, cy, code int, c, dim color.RGBA) {
+	switch {
+	case code == 0:
+		drawSun(img, cx, cy, c)
+		drawSunGlow(img, cx, cy, dim)
+	case code <= 3:
+		drawSunCloud(img, cx, cy, c, dim)
+	case code >= 45 && code <= 48:
+		drawFog(img, cx, cy, dim)
+		drawFog(img, cx, cy, c)
+	case code >= 51 && code <= 57:
+		drawRain(img, cx, cy, c, false)
+	case code >= 61 && code <= 65:
+		drawRain(img, cx, cy, c, true)
+	case code >= 71 && code <= 77:
+		drawSnow(img, cx, cy, c)
+	case code >= 80 && code <= 86:
+		drawRain(img, cx, cy, c, true)
+	case code >= 95:
+		drawStorm(img, cx, cy, c)
+	default:
+		drawCloud(img, cx, cy, dim)
+		drawCloud(img, cx, cy, c)
 	}
-}
-
-func fillCircle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
-	for y := cy - r; y <= cy+r; y++ {
-		for x := cx - r; x <= cx+r; x++ {
-			dx, dy := x-cx, y-cy
-			if dx*dx+dy*dy <= r*r {
-				if x >= 0 && x < img.Bounds().Dx() && y >= 0 && y < img.Bounds().Dy() {
-					over(img, x, y, c)
-				}
-			}
-		}
-	}
-}
-
-func over(img *image.RGBA, x, y int, c color.RGBA) {
-	_, _, _, a := c.RGBA()
-	if a == 0xffff {
-		img.Set(x, y, c)
-		return
-	}
-	existing := img.RGBAAt(x, y)
-	alpha := float64(c.A) / 255.0
-	r := float64(existing.R)*(1-alpha) + float64(c.R)*alpha
-	g := float64(existing.G)*(1-alpha) + float64(c.G)*alpha
-	b := float64(existing.B)*(1-alpha) + float64(c.B)*alpha
-	img.Set(x, y, color.RGBA{uint8(r), uint8(g), uint8(b), existing.A})
 }
 
 func set(img *image.RGBA, x, y int, c color.RGBA) {
-	if x >= 0 && x < img.Bounds().Dx() && y >= 0 && y < img.Bounds().Dy() {
+	if x >= 0 && x < 32 && y >= 0 && y < 32 {
 		img.Set(x, y, c)
+	}
+}
+
+func drawSunGlow(img *image.RGBA, cx, cy int, c color.RGBA) {
+	for dx := -7; dx <= 7; dx++ {
+		for dy := -7; dy <= 7; dy++ {
+			d := dx*dx + dy*dy
+			if d <= 20 {
+				set(img, cx+dx, cy+dy, c)
+			}
+		}
 	}
 }
 
 func drawSun(img *image.RGBA, cx, cy int, c color.RGBA) {
-	for dx := -4; dx <= 4; dx++ {
-		for dy := -4; dy <= 4; dy++ {
-			if dx*dx+dy*dy <= 8 {
+	for dx := -5; dx <= 5; dx++ {
+		for dy := -5; dy <= 5; dy++ {
+			d := dx*dx + dy*dy
+			if d >= 4 && d <= 9 {
 				set(img, cx+dx, cy+dy, c)
 			}
 		}
 	}
+	for dx := -5; dx <= 5; dx++ {
+		for dy := -5; dy <= 5; dy++ {
+			d := dx*dx + dy*dy
+			if d >= 14 && d <= 22 {
+				set(img, cx+dx, cy+dy, c)
+			}
+		}
+	}
+	set(img, cx-6, cy-2, c)
+	set(img, cx+6, cy-2, c)
+	set(img, cx-6, cy+2, c)
+	set(img, cx+6, cy+2, c)
+	set(img, cx-2, cy-6, c)
+	set(img, cx+2, cy-6, c)
+	set(img, cx-2, cy+6, c)
+	set(img, cx+2, cy+6, c)
 }
 
-func drawCloud(img *image.RGBA, cx, cy int, c color.RGBA, _ bool) {
-	for dy := -2; dy <= 2; dy++ {
-		for dx := -7; dx <= 7; dx++ {
-			if dy > -2 && dy < 2 {
-				set(img, cx+dx, cy+dy, c)
+func drawSunCloud(img *image.RGBA, cx, cy int, c, dim color.RGBA) {
+	for dx := -4; dx <= 4; dx++ {
+		for dy := -4; dy <= 4; dy++ {
+			d := dx*dx + dy*dy
+			if d >= 4 && d <= 9 {
+				set(img, cx-5+dx, cy-3+dy, c)
 			}
 		}
 	}
-	for dx := -4; dx <= 4; dx++ {
-		set(img, cx+dx, cy-3, c)
+	set(img, cx-11, cy-5, c)
+	set(img, cx-5, cy-5, c)
+	set(img, cx-11, cy+1, c)
+	set(img, cx-5, cy+1, c)
+	set(img, cx-8, cy-8, c)
+	set(img, cx-8, cy+4, c)
+	drawCloud(img, cx+2, cy+1, dim)
+	drawCloud(img, cx+2, cy+1, c)
+}
+
+func drawCloud(img *image.RGBA, cx, cy int, c color.RGBA) {
+	for x := -4; x <= 4; x++ {
+		set(img, cx+x, cy-1, c)
+		set(img, cx+x, cy, c)
+		set(img, cx+x, cy+1, c)
 	}
-	for dx := -4; dx <= 5; dx++ {
-		set(img, cx+dx, cy+3, c)
+	for x := -2; x <= 2; x++ {
+		set(img, cx+x, cy-2, c)
+		set(img, cx+x, cy+2, c)
+	}
+	for x := -3; x <= 3; x++ {
+		set(img, cx+x, cy-3, c)
+	}
+	for x := -2; x <= 4; x++ {
+		set(img, cx+x, cy+3, c)
 	}
 }
 
 func drawFog(img *image.RGBA, cx, cy int, c color.RGBA) {
-	dim := color.RGBA{c.R, c.G, c.B, uint8(float64(c.A) * 0.7)}
-	for dy := -3; dy <= 3; dy += 2 {
-		for dx := -7; dx <= 7; dx++ {
-			set(img, cx+dx, cy+dy, dim)
+	for y := -4; y <= 4; y += 2 {
+		for x := -7; x <= 7; x++ {
+			set(img, cx+x, cy+y, c)
 		}
 	}
 }
 
 func drawRain(img *image.RGBA, cx, cy int, c color.RGBA, heavy bool) {
-	drawCloud(img, cx, cy, c, true)
-	count := 3
+	drawCloud(img, cx, cy, c)
+	n := 3
 	if heavy {
-		count = 5
+		n = 5
 	}
-	for i := 0; i < count; i++ {
+	for i := 0; i < n; i++ {
 		x := cx - 4 + i*2
 		set(img, x, cy+4, c)
 		set(img, x, cy+5, c)
-		set(img, x, cy+6, c)
+		set(img, x-1, cy+6, c)
+		set(img, x+1, cy+6, c)
 	}
 }
 
 func drawSnow(img *image.RGBA, cx, cy int, c color.RGBA) {
-	drawCloud(img, cx, cy, c, true)
+	drawCloud(img, cx, cy, c)
 	for i := -1; i <= 1; i++ {
 		x := cx + i*4
 		set(img, x, cy+4, c)
 		set(img, x+1, cy+5, c)
-		set(img, x, cy+6, c)
 		set(img, x-1, cy+5, c)
+		set(img, x, cy+6, c)
 	}
 }
 
 func drawStorm(img *image.RGBA, cx, cy int, c color.RGBA) {
-	drawCloud(img, cx, cy, c, true)
+	drawCloud(img, cx, cy, c)
 	set(img, cx-3, cy+4, c)
 	set(img, cx-2, cy+4, c)
+	set(img, cx-2, cy+5, c)
 	set(img, cx-1, cy+5, c)
-	set(img, cx, cy+5, c)
+	set(img, cx, cy+6, c)
 	set(img, cx+1, cy+6, c)
-	set(img, cx+2, cy+6, c)
 }
