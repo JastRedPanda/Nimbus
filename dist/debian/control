@@ -1,14 +1,11 @@
-Source: nimbus
+Package: nimbus
+Version: 1.0.0
+Architecture: amd64
+Maintainer: JastRedPanda <jastredpanda@users.noreply.github.com>
+Depends: libgtk-3-0
 Section: utils
 Priority: optional
-Maintainer: JastRedPanda <jastredpanda@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 12), golang-go, libgtk-3-dev
-Standards-Version: 4.5.0
 Homepage: https://github.com/JastRedPanda/Nimbus
-
-Package: nimbus
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libgtk-3-0
 Description: Weather tray app with 7-day forecast and settings GUI
  Nimbus displays current temperature and weather conditions in the
  system tray. Features 7-day forecast, configurable units, themes,
