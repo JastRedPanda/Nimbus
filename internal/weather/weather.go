@@ -65,31 +65,6 @@ func Fetch(lat, lon float64) (*WeatherData, error) {
 	}, nil
 }
 
-func (w *WeatherData) Condition() string {
-	switch {
-	case w.WeatherCode == 0:
-		return "Clear"
-	case w.WeatherCode <= 3:
-		return "Partly cloudy"
-	case w.WeatherCode == 45 || w.WeatherCode == 48:
-		return "Foggy"
-	case w.WeatherCode >= 51 && w.WeatherCode <= 55:
-		return "Drizzle"
-	case w.WeatherCode >= 61 && w.WeatherCode <= 65:
-		return "Rain"
-	case w.WeatherCode >= 71 && w.WeatherCode <= 77:
-		return "Snow"
-	case w.WeatherCode >= 80 && w.WeatherCode <= 82:
-		return "Rain showers"
-	case w.WeatherCode >= 85 && w.WeatherCode <= 86:
-		return "Snow showers"
-	case w.WeatherCode >= 95:
-		return "Thunderstorm"
-	default:
-		return "Unknown"
-	}
-}
-
 func (w *WeatherData) Emoji() string {
 	switch {
 	case w.WeatherCode == 0:
@@ -115,14 +90,4 @@ func (w *WeatherData) Emoji() string {
 	default:
 		return "\U0001f321\ufe0f"
 	}
-}
-
-func (w *WeatherData) Tooltip() string {
-	return fmt.Sprintf("%s %.1f\u00b0C | %s | Feels %.1f\u00b0C | \U0001f4a7%d%% | \U0001f4a8%.0f km/h",
-		w.Emoji(), w.Temperature, w.Condition(), w.ApparentTemp,
-		int(w.Humidity), w.WindSpeed)
-}
-
-func (w *WeatherData) Short() string {
-	return fmt.Sprintf("%.1f\u00b0C %s", w.Temperature, w.Emoji())
 }

@@ -1,8 +1,10 @@
-# Nimbus
+# Nimbus v1.0.0
 
-Weather tray app — shows current weather in system tray.
+**Інформер погоди в системному треї** | **Weather tray app**
 
 Cross-platform: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).
+
+Languages: English, Українська
 
 ## Download
 
@@ -28,14 +30,19 @@ GOOS=linux GOARCH=amd64 go build -o nimbus .
 go build -ldflags="-s -w" -o nimbus .
 ```
 
-## Usage
+## Usage / Використання
 
-Just run the binary — it appears in the system tray.
+Just run the binary — it appears in the system tray.  
+Просто запустіть — з'явиться в системному треї.
 
-- **Left click / hover**: see current weather
-- **Refresh now**: force update
-- **Units**: toggle Celsius/Fahrenheit
-- **Quit**: exit
+### Menu / Меню
+| English | Українська |
+|---|---|
+| Refresh now | Оновити зараз |
+| Units: °C/°F | Одиниці: °C/°F |
+| Language: English / Ukrainian | Мова: English / Українська |
+| About | Про програму |
+| Quit | Вийти |
 
 ### Configuration
 
@@ -48,11 +55,13 @@ Auto-created at first run:
   "latitude": 55.7558,
   "longitude": 37.6173,
   "update_interval": 10,
-  "units": "celsius"
+  "units": "celsius",
+  "language": "en"
 }
 ```
 
-Change coordinates to your city. Interval in minutes.
+Change coordinates to your city. Interval in minutes.  
+`language`: `"en"` or `"uk"` — UI language (switchable via tray menu).
 
 ## Weather API
 

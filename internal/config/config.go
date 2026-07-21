@@ -13,6 +13,7 @@ type Config struct {
 	Longitude      float64 `json:"longitude"`
 	UpdateInterval int     `json:"update_interval"`
 	Units          string  `json:"units"`
+	Language       string  `json:"language"`
 }
 
 func Default() *Config {
@@ -21,6 +22,7 @@ func Default() *Config {
 		Longitude:      37.6173,
 		UpdateInterval: 10,
 		Units:          "celsius",
+		Language:       "en",
 	}
 }
 
