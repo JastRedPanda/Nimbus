@@ -22,9 +22,18 @@ var settingsContent string
 //go:embed forecast.html
 var forecastContent string
 
+//go:embed about.html
+var aboutContent string
+
+var (
+	BuildVersion = "0.1.4"
+	BuildDate    = "07.2026"
+)
+
 var (
 	settingsTmpl = template.Must(template.New("settings").Parse(settingsContent))
 	forecastTmpl = template.Must(template.New("forecast").Parse(forecastContent))
+	aboutTmpl    = template.Must(template.New("about").Parse(aboutContent))
 )
 
 func openURL(url string) {
@@ -80,6 +89,24 @@ func ShowSettings(cfg *config.Config) *config.Config {
 		l.Close()
 		return nc
 	}
+}
+
+func ShowAbout() {
+	l := listen()
+	if l == nil {
+		return
+	}
+	addr := l.Addr().String()
+	openURL("http://" + addr + "/about")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
+		aboutTmpl.Execute(w, map[string]string{
+			"Version": BuildVersion,
+			"Date":    BuildDate,
+		})
+	})
+	http.Serve(l, mux)
 }
 
 func ShowForecast(lat, lon float64, units, lang, windUnit string) {

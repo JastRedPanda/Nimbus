@@ -55,7 +55,7 @@ func (a *app) handleMenu() {
 		case <-a.mSettings.ClickedCh:
 			a.openSettings()
 		case <-a.mAbout.ClickedCh:
-			a.openURL("https://github.com/JastRedPanda/Nimbus")
+			ui.ShowAbout()
 		case <-a.mQuit.ClickedCh:
 			systray.Quit()
 			return
