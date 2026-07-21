@@ -1,15 +1,23 @@
-.PHONY: all build-windows build-linux build-linux-static clean
+.PHONY: build deb rpm clean
 
-all: build-windows build-linux
-
-build-windows:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o bin/nimbus-windows-amd64.exe .
+build:
+	go build -ldflags="-s -w -H windowsgui" -o nimbus.exe .
 
 build-linux:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/nimbus-linux-amd64 .
+	CGO_ENABLED=1 go build -ldflags="-s -w" -o nimbus .
 
-build-linux-static:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-s -w -linkmode external -extldflags '-static'" -o bin/nimbus-linux-amd64-static .
+deb: build-linux
+	mkdir -p dist/debian/nimbus/DEBIAN
+	mkdir -p dist/debian/nimbus/usr/bin
+	mkdir -p dist/debian/nimbus/usr/share/applications
+	install -m 755 nimbus dist/debian/nimbus/usr/bin/
+	install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
+	install -m 644 dist/debian/control dist/debian/nimbus/DEBIAN/
+	dpkg-deb --build dist/debian/nimbus dist/nimbus_1.0.0-1_amd64.deb
+
+rpm: build-linux dist/rpm/nimbus.spec
+	mkdir -p dist/rpm/BUILD dist/rpm/RPMS dist/rpm/SRPMS
+	rpmbuild -bb --define "_topdir $(PWD)/dist/rpm" dist/rpm/nimbus.spec
 
 clean:
-	rm -rf bin/
+	rm -f nimbus nimbus.exe dist/nimbus_*.deb dist/rpm/RPMS/*.rpm

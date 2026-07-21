@@ -1,0 +1,7 @@
+nimbus (1.0.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Weather tray app with 7-day forecast and settings GUI.
+  * English and Ukrainian localization.
+
+ -- JastRedPanda <jastredpanda@users.noreply.github.com>  Mon, 21 Jul 2026 09:00:00 +0300

@@ -8,25 +8,45 @@ Languages: English, Українська
 ## Features / Можливості
 
 - Temperature text in system tray / Текст температури в системному треї
-- **7-day Forecast** popup window (Windows) / Спливаюче вікно прогнозу на 7 днів (Windows)
-- **Settings GUI** (Windows) — city, units, theme, language, font scale, update interval / Вікно налаштувань з графічним інтерфейсом
+- **7-day Forecast** — popup window (Windows) or web page (Linux) / Прогноз на 7 днів
+- **Settings GUI** — native window (Windows) or web form (Linux) / Вікно налаштувань
 - Temperature unit: °C / °F
 - Pressure unit: hPa / mmHg / inHg
 - Wind unit: m/s / km/h
-- Font scale: slider 1–100% for tray text
+- Font scale: slider 1–100% for tray text / Масштаб шрифту в треї
 - Update interval: 5 min – 24 hours
-- Icon theme: Dark / Light (for settings & forecast windows)
+- Window theme: Dark / Light
 - Language: English / Українська
 - No console window (Windows)
 
 ## Download / Завантажити
 
+### Windows
 Pre-built binaries: [Releases](https://github.com/JastRedPanda/Nimbus/releases)
+
+### Linux — distribution packages / Пакети для дистрибутивів
+
+#### Debian / Ubuntu
+```bash
+sudo dpkg -i nimbus_1.0.0-1_amd64.deb
+sudo apt-get install -f  # install dependencies
+```
+
+#### RHEL / Rocky / Fedora
+```bash
+sudo dnf install nimbus-1.0.0-1.x86_64.rpm
+```
+
+#### openSUSE
+```bash
+sudo zypper install nimbus-1.0.0-1.x86_64.rpm
+```
 
 ## Build from source / Збірка з вихідного коду
 
 ### Requirements / Вимоги
 - Go 1.21+
+- Linux: GTK3 development headers (`libgtk-3-dev` / `gtk3-devel`)
 
 ### Windows
 ```bash
@@ -35,12 +55,19 @@ go build -ldflags="-s -w -H windowsgui" -o nimbus.exe .
 
 ### Linux
 ```bash
-GOOS=linux GOARCH=amd64 go build -o nimbus .
+CGO_ENABLED=1 go build -ldflags="-s -w" -o nimbus .
 ```
 
-### Static build (Linux)
+### Build packages / Збірка пакетів
+
+#### Debian / Ubuntu
 ```bash
-go build -ldflags="-s -w" -o nimbus .
+make deb
+```
+
+#### RHEL / Rocky / Fedora / openSUSE
+```bash
+make rpm
 ```
 
 ## Usage / Використання
@@ -52,23 +79,29 @@ Just run the binary — it appears in the system tray.
 |---|---|
 | **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
-| **Left-click** | Opens **7-day Forecast** popup (Windows) |
-| **Right-click → Forecast** | Opens forecast in browser (Linux) |
-| **Right-click → Settings...** | Opens **Settings GUI** (Windows: native window / Linux: opens config file) |
-| **Right-click → Refresh now** | Forces weather update |
+| **Left-click** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
+| **Right-click → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
+| **Right-click → Refresh now** | Forces weather update / Оновити погоду |
 | **Right-click → About** | Opens GitHub page |
 | **Right-click → Quit** | Exits app |
 
-### Settings window / Вікно налаштувань
+### Settings / Налаштування
 
-- City search with autocomplete / Пошук міста з автодоповненням
-- Manual lat/lon entry / Ручне введення координат
-- Temperature, pressure, wind unit selection / Вибір одиниць вимірювання
-- Window theme (Auto/Dark/Light) / Тема вікон
-- Language switch / Перемикання мови
-- Font scale slider (1–100%) / Слайдер масштабу шрифту
-- Update interval dropdown (5 min – 24 h) / Вибір інтервалу оновлення
-- Dark mode support (Windows) / Підтримка темної теми
+Available via **Right-click → Settings...** or system menu:  
+Доступно через **Правий клік → Налаштування...**
+
+- **Windows**: native GUI window with all controls
+- **Linux**: web form opened in default browser with local HTTP server
+
+Fields / Поля:
+- City name, latitude, longitude / Назва міста та координати
+- Temperature unit (°C / °F) / Одиниця температури
+- Pressure unit (hPa / mmHg / inHg) / Одиниця тиску
+- Wind unit (m/s / km/h) / Одиниця вітру
+- Window theme (Auto / Dark / Light) / Тема вікон
+- Language (English / Українська)
+- Font scale 1–100% for tray text / Масштаб шрифту в треї
+- Update interval (5 min – 24 h) / Інтервал оновлення
 
 ### Configuration / Конфігурація
 

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="{{.t.String}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nimbus</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f0;color:#111;padding:20px;max-width:480px;margin:0 auto}
+h1{text-align:center;font-size:18px;margin-bottom:20px;color:#555}
+fieldset{border:1px solid #ccc;border-radius:8px;padding:14px;margin-bottom:14px;background:#fff}
+legend{font-size:14px;font-weight:600;color:#666;padding:0 6px}
+.row{display:flex;align-items:center;margin-bottom:8px;gap:8px}
+.row:last-child{margin-bottom:0}
+label{flex:0 0 100px;font-size:13px;color:#555}
+input[type=text],input[type=number],select{flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px}
+input[type=range]{flex:1}
+.radio-group{display:flex;gap:6px;flex-wrap:wrap}
+.radio-group label{flex:0;font-size:13px}
+.btns{display:flex;gap:10px;justify-content:center;margin-top:10px}
+.btns button{padding:8px 24px;border:none;border-radius:6px;font-size:14px;cursor:pointer}
+.btn-save{background:#2b6cf0;color:#fff}
+.btn-cancel{background:#888;color:#fff}
+.btn-del{background:#c0392b;color:#fff}
+.btn-save:hover{background:#1a5cd0}
+.btn-cancel:hover{background:#666}
+.btn-del:hover{background:#a93226}
+.val{font-size:13px;color:#888;width:36px;text-align:right}
+</style>
+</head>
+<body>
+<h1>{{if eq .t.String "uk"}}Налаштування Nimbus{{else}}Nimbus Settings{{end}}</h1>
+<form action="/save" method="post">
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Місто{{else}}City{{end}}</legend>
+<div class="row"><label>{{if eq .t.String "uk"}}Назва{{else}}Name{{end}}</label><input type="text" name="city_name" value="{{.cityName}}"></div>
+<div class="row"><label>{{if eq .t.String "uk"}}Широта{{else}}Latitude{{end}}</label><input type="text" name="latitude" value="{{.latitude}}"></div>
+<div class="row"><label>{{if eq .t.String "uk"}}Довгота{{else}}Longitude{{end}}</label><input type="text" name="longitude" value="{{.longitude}}"></div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Температура{{else}}Temperature{{end}}</legend>
+<div class="radio-group">
+{{range .units}}<label><input type="radio" name="units" value="{{.}}" {{chk $.tempUnit .}}>{{if eq . "celsius"}}°C{{else}}°F{{end}}</label>{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Тиск{{else}}Pressure{{end}}</legend>
+<div class="radio-group">
+{{range $u := .presUnits}}<label><input type="radio" name="pressure_unit" value="{{$u}}" {{chk $.presUnit $u}}>{{if eq $u "hpa"}}hPa{{else if eq $u "mmhg"}}mmHg{{else}}inHg{{end}}</label>{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Вітер{{else}}Wind{{end}}</legend>
+<div class="radio-group">
+{{range $u := .windUnits}}<label><input type="radio" name="wind_unit" value="{{$u}}" {{chk $.windUnit $u}}>{{if eq $u "ms"}}m/s{{else}}km/h{{end}}</label>{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Тема вікон{{else}}Window Theme{{end}}</legend>
+<div class="radio-group">
+{{range $u := .themes}}<label><input type="radio" name="icon_theme" value="{{$u}}" {{chk $.iconTheme $u}}>{{if eq $u "auto"}}Auto{{else if eq $u "dark"}}Dark{{else}}Light{{end}}</label>{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Мова{{else}}Language{{end}}</legend>
+<div class="radio-group">
+{{range .langs}}<label><input type="radio" name="language" value="{{.Value}}" {{chk $.language .Value}}>{{.Label}}</label>{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Розмір шрифту в треї{{else}}Tray Font Size{{end}}</legend>
+<div class="row">
+<input type="range" name="font_scale" min="1" max="100" value="{{.fontScale}}" oninput="document.getElementById('fsVal').textContent=this.value+'%'">
+<span class="val" id="fsVal">{{.fontScale}}%</span>
+</div>
+</fieldset>
+
+<fieldset>
+<legend>{{if eq .t.String "uk"}}Інтервал оновлення{{else}}Update Interval{{end}}</legend>
+<div class="row">
+<select name="update_interval">
+{{range $iv := .intervals}}
+<option value="{{$iv.Minutes}}" {{if eq $iv.Minutes $.updateInt}}selected{{end}}>{{$iv.Label}}</option>
+{{end}}
+</select>
+</div>
+</fieldset>
+
+<div class="btns">
+<button type="submit" class="btn-save">{{if eq .t.String "uk"}}Зберегти{{else}}Save{{end}}</button>
+<button type="button" class="btn-cancel" onclick="window.close()">{{if eq .t.String "uk"}}Скасувати{{else}}Cancel{{end}}</button>
+</div>
+</form>
+</body>
+</html>

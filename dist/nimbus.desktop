@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nimbus
+Comment=Weather tray app
+Exec=nimbus
+Terminal=false
+Categories=Utility;
+StartupNotify=false

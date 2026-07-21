@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+export DH_GOLANG_INSTALL_GOPATH = /usr/share/gocode
+
+%:
+	dh $@ --with=golang
+
+override_dh_auto_build:
+	dh_auto_build -- -ldflags="-s -w"
+
+override_dh_auto_install:
+	dh_auto_install -- -ldflags="-s -w"
+
+override_dh_strip:
+	dh_strip --program /usr/bin/nimbus
