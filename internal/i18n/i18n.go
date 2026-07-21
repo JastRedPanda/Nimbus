@@ -81,6 +81,13 @@ func conditionUK(code int) string {
 	}
 }
 
+func (l Lang) Settings() string {
+	if l == UK {
+		return "Налаштування"
+	}
+	return "Settings"
+}
+
 func (l Lang) Refresh() string {
 	if l == UK {
 		return "Оновити зараз"
@@ -102,19 +109,106 @@ func unitSymbol(unit string) string {
 	return "°C"
 }
 
-func (l Lang) UnitsLabel(unit string) string {
+func (l Lang) UnitLabel(unit string) string {
 	sym := unitSymbol(unit)
 	if l == UK {
-		return "Одиниці: " + sym
+		return "Температура: " + sym
 	}
-	return "Units: " + sym
+	return "Temperature: " + sym
 }
 
-func (l Lang) UnitsTooltip() string {
+func (l Lang) Celsius() string { return "°C" }
+func (l Lang) Fahrenheit() string { return "°F" }
+
+func (l Lang) PressureUnitLabel(unit string) string {
 	if l == UK {
-		return "Перемкнути °C/°F"
+		switch unit {
+		case "mmhg":
+			return "Тиск: мм рт. ст."
+		case "inhg":
+			return "Тиск: inHg"
+		default:
+			return "Тиск: гПа"
+		}
 	}
-	return "Toggle °C/°F"
+	switch unit {
+	case "mmhg":
+		return "Pressure: mmHg"
+	case "inhg":
+		return "Pressure: inHg"
+	default:
+		return "Pressure: hPa"
+	}
+}
+
+func (l Lang) PressureUnitTooltip() string {
+	if l == UK {
+		return "Змінити одиницю тиску"
+	}
+	return "Change pressure unit"
+}
+
+func (l Lang) ThemeLabel(theme string) string {
+	if l == UK {
+		switch theme {
+		case "dark":
+			return "Тема: Темна"
+		case "light":
+			return "Тема: Світла"
+		default:
+			return "Тема: Авто"
+		}
+	}
+	switch theme {
+	case "dark":
+		return "Theme: Dark"
+	case "light":
+		return "Theme: Light"
+	default:
+		return "Theme: Auto"
+	}
+}
+
+func (l Lang) ThemeTooltip() string {
+	if l == UK {
+		return "Змінити тему іконок"
+	}
+	return "Change icon theme"
+}
+
+func (l Lang) City() string {
+	if l == UK {
+		return "Місто"
+	}
+	return "City"
+}
+
+func (l Lang) AutoDetect() string {
+	if l == UK {
+		return "Автовизначення"
+	}
+	return "Auto-detect"
+}
+
+func (l Lang) AutoDetectTooltip() string {
+	if l == UK {
+		return "Визначити місто за IP"
+	}
+	return "Detect city by IP"
+}
+
+func (l Lang) EditConfig() string {
+	if l == UK {
+		return "Редагувати конфіг..."
+	}
+	return "Edit config..."
+}
+
+func (l Lang) EditConfigTooltip() string {
+	if l == UK {
+		return "Відкрити файл конфігурації"
+	}
+	return "Open configuration file"
 }
 
 func (l Lang) LanguageLabel(cur Lang) string {
@@ -165,14 +259,47 @@ func (l Lang) QuitTooltip() string {
 	return "Quit Nimbus"
 }
 
-func (l Lang) Tooltip(emoji string, weatherCode int, temp, apparent float64, humidity int, windSpeed float64, unit string) string {
-	sym := unitSymbol(unit)
+func (l Lang) mmHg() string {
 	if l == UK {
-		return fmt.Sprintf("%s %.0f%s | %s | Відчувається %.0f%s | 💧%d%% | 💨%s",
-			emoji, temp, sym, conditionUK(weatherCode), apparent, sym, humidity, formatWindUK(windSpeed))
+		return "мм рт. ст."
 	}
-	return fmt.Sprintf("%s %.0f%s | %s | Feels %.0f%s | 💧%d%% | 💨%s",
-		emoji, temp, sym, conditionEN(weatherCode), apparent, sym, humidity, formatWindEN(windSpeed))
+	return "mmHg"
+}
+
+func (l Lang) hPa() string {
+	return "hPa"
+}
+
+func (l Lang) inHg() string {
+	return "inHg"
+}
+
+func formatPressure(hPa float64, unit string, lang Lang) string {
+	switch unit {
+	case "mmhg":
+		return fmt.Sprintf("%.0f %s", hPa*0.750064, lang.mmHg())
+	case "inhg":
+		return fmt.Sprintf("%.2f %s", hPa*0.02953, lang.inHg())
+	default:
+		return fmt.Sprintf("%.0f %s", hPa, lang.hPa())
+	}
+}
+
+func (l Lang) Tooltip(emoji string, weatherCode int, temp, apparent float64, humidity int, windSpeed, pressure float64, unit, pressureUnit string) string {
+	sym := unitSymbol(unit)
+	cond := conditionEN(weatherCode)
+	windStr := formatWindEN(windSpeed)
+	pressureStr := formatPressure(pressure, pressureUnit, EN)
+
+	if l == UK {
+		cond = conditionUK(weatherCode)
+		windStr = formatWindUK(windSpeed)
+		pressureStr = formatPressure(pressure, pressureUnit, UK)
+		return fmt.Sprintf("%s %.0f%s | %s | Відчувається %.0f%s | 💧%d%% | 💨%s | %s",
+			emoji, temp, sym, cond, apparent, sym, humidity, windStr, pressureStr)
+	}
+	return fmt.Sprintf("%s %.0f%s | %s | Feels %.0f%s | 💧%d%% | 💨%s | %s",
+		emoji, temp, sym, cond, apparent, sym, humidity, windStr, pressureStr)
 }
 
 func (l Lang) WeatherLine(emoji string, temp float64, unit string) string {

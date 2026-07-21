@@ -11,8 +11,11 @@ import (
 type Config struct {
 	Latitude       float64 `json:"latitude"`
 	Longitude      float64 `json:"longitude"`
+	CityName       string  `json:"city_name"`
 	UpdateInterval int     `json:"update_interval"`
 	Units          string  `json:"units"`
+	PressureUnit   string  `json:"pressure_unit"`
+	IconTheme      string  `json:"icon_theme"`
 	Language       string  `json:"language"`
 }
 
@@ -20,8 +23,11 @@ func Default() *Config {
 	return &Config{
 		Latitude:       55.7558,
 		Longitude:      37.6173,
+		CityName:       "Moscow",
 		UpdateInterval: 10,
 		Units:          "celsius",
+		PressureUnit:   "hpa",
+		IconTheme:      "auto",
 		Language:       "en",
 	}
 }
@@ -80,6 +86,14 @@ func (c *Config) Save() error {
 	return os.WriteFile(path, data, 0644)
 }
 
+func ConfigPath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
 func (c *Config) Interval() time.Duration {
 	d := time.Duration(c.UpdateInterval) * time.Minute
 	if d < time.Minute {
@@ -89,6 +103,6 @@ func (c *Config) Interval() time.Duration {
 }
 
 func (c *Config) String() string {
-	return fmt.Sprintf("Location: %.4f, %.4f | Interval: %d min | Units: %s",
-		c.Latitude, c.Longitude, c.UpdateInterval, c.Units)
+	return fmt.Sprintf("City: %s (%.4f, %.4f) | Interval: %d min | Temp: %s | Pressure: %s | Theme: %s | Lang: %s",
+		c.CityName, c.Latitude, c.Longitude, c.UpdateInterval, c.Units, c.PressureUnit, c.IconTheme, c.Language)
 }

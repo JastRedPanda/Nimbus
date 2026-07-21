@@ -3,7 +3,7 @@
 all: build-windows build-linux
 
 build-windows:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/nimbus-windows-amd64.exe .
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o bin/nimbus-windows-amd64.exe .
 
 build-linux:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/nimbus-linux-amd64 .
