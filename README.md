@@ -8,14 +8,14 @@ Languages: English, Українська
 
 ## Features / Можливості
 
-- Current weather in system tray / Погода в системному треї
-- **Settings / Налаштування**:
-  - City: auto-detect by IP or choose from presets / Місто: автовизначення за IP або вибір зі списку
-  - Temperature: °C / °F / Температура: °C / °F
-  - Pressure: hPa / mmHg / inHg / Тиск: гПа / мм рт. ст. / inHg
-  - Icon theme: Auto / Light / Dark / Тема іконок: Авто / Світла / Темна
-  - Language: English / Українська
-- No console window (Windows) / Без консольного вікна (Windows)
+- Weather in system tray with temperature + weather icon / Погода в треї з температурою та іконкою
+- **7-day Forecast** — opens in browser / Прогноз на 7 днів у браузері
+- **Settings window** (Windows) — city, units, theme, language / Вікно налаштувань
+- Temperature unit: °C / °F
+- Pressure unit: hPa / mmHg / inHg
+- Icon theme: Auto (temperature color) / Dark / Light
+- Language: English / Українська
+- No console window (Windows)
 
 ## Download
 
@@ -46,21 +46,15 @@ go build -ldflags="-s -w" -o nimbus .
 Just run the binary — it appears in the system tray.  
 Просто запустіть — з'явиться в системному треї.
 
-### Right-click menu / Контекстне меню
-
-| English | Українська |
+| Action | Result |
 |---|---|
-| Refresh now | Оновити зараз |
-| City: ... | Місто: ... |
-| ├ Auto-detect | ├ Автовизначення |
-| ├ Moscow, London... | ├ Москва, Лондон... |
-| └ Edit config... | └ Редагувати конфіг... |
-| Temperature: °C/°F | Температура: °C/°F |
-| Pressure: hPa/mmHg/inHg | Тиск: гПа/мм рт. ст./inHg |
-| Icon theme: Auto/Light/Dark | Тема іконок: Авто/Світла/Темна |
-| Language: English/Українська | Мова: English/Українська |
-| About | Про програму |
-| Quit | Вийти |
+| **Tray icon** | Shows weather symbol colored by temperature |
+| **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
+| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
+| **Click** → **7-day Forecast** | Opens Open-Meteo forecast in browser |
+| **Right-click** → **Settings...** | Opens settings window (Windows: PowerShell GUI / other: config file) |
+| **Right-click** → **About** | Opens GitHub page |
+| **Right-click** → **Quit** | Exits app |
 
 ### Configuration
 
