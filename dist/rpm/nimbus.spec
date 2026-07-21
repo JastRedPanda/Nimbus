@@ -34,7 +34,7 @@ echo "Binary built separately in workflow"
 
 %install
 mkdir -p %{buildroot}%{_bindir}
-install -m 755 nimbus %{buildroot}%{_bindir}/nimbus
+install -m 755 build-rpm/nimbus %{buildroot}%{_bindir}/nimbus
 
 mkdir -p %{buildroot}%{_datadir}/applications
 cat > %{buildroot}%{_datadir}/applications/nimbus.desktop << EOF
