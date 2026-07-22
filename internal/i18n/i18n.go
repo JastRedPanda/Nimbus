@@ -273,29 +273,29 @@ func (l Lang) QuitTooltip() string {
 	return "Quit Nimbus"
 }
 
-func (l Lang) mmHg() string {
+func (l Lang) MmHg() string {
 	if l == UK {
 		return "мм рт. ст."
 	}
 	return "mmHg"
 }
 
-func (l Lang) hPa() string {
+func (l Lang) HPa() string {
 	return "hPa"
 }
 
-func (l Lang) inHg() string {
+func (l Lang) InHg() string {
 	return "inHg"
 }
 
 func formatPressure(hPa float64, unit string, lang Lang) string {
 	switch unit {
 	case "mmhg":
-		return fmt.Sprintf("%.0f %s", hPa*0.750064, lang.mmHg())
+		return fmt.Sprintf("%.0f %s", hPa*0.750064, lang.MmHg())
 	case "inhg":
-		return fmt.Sprintf("%.2f %s", hPa*0.02953, lang.inHg())
+		return fmt.Sprintf("%.2f %s", hPa*0.02953, lang.InHg())
 	default:
-		return fmt.Sprintf("%.0f %s", hPa, lang.hPa())
+		return fmt.Sprintf("%.0f %s", hPa, lang.HPa())
 	}
 }
 
@@ -388,6 +388,9 @@ func (l Lang) WindGroup() string {
 }
 
 func (l Lang) WindMS() string {
+	if l == UK {
+		return "м/с"
+	}
 	return "m/s"
 }
 
@@ -403,6 +406,27 @@ func (l Lang) ThemeGroup() string {
 		return "Тема"
 	}
 	return "Icon Theme"
+}
+
+func (l Lang) ThemeAuto() string {
+	if l == UK {
+		return "авто"
+	}
+	return "Auto"
+}
+
+func (l Lang) ThemeDark() string {
+	if l == UK {
+		return "темна"
+	}
+	return "Dark"
+}
+
+func (l Lang) ThemeLight() string {
+	if l == UK {
+		return "світла"
+	}
+	return "Light"
 }
 
 func (l Lang) LanguageGroup() string {

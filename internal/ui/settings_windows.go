@@ -188,9 +188,9 @@ func (d *setDlg) createControls() {
 	y += 56
 
 	createGroup(d.hwnd, d.lang.PressureGroup(), 12, y, 280, 48)
-	createRadio(d.hwnd, "hPa", 22, y+18, 60, 22, ID_PRES_H, d.cfg.PressureUnit == "hpa", true)
-	createRadio(d.hwnd, "mmHg", 90, y+18, 70, 22, ID_PRES_M, d.cfg.PressureUnit == "mmhg", false)
-	createRadio(d.hwnd, "inHg", 170, y+18, 60, 22, ID_PRES_I, d.cfg.PressureUnit == "inhg", false)
+	createRadio(d.hwnd, d.lang.HPa(), 22, y+18, 60, 22, ID_PRES_H, d.cfg.PressureUnit == "hpa", true)
+	createRadio(d.hwnd, d.lang.MmHg(), 90, y+18, 70, 22, ID_PRES_M, d.cfg.PressureUnit == "mmhg", false)
+	createRadio(d.hwnd, d.lang.InHg(), 170, y+18, 60, 22, ID_PRES_I, d.cfg.PressureUnit == "inhg", false)
 	y += 56
 
 	createGroup(d.hwnd, d.lang.WindGroup(), 12, y, 180, 48)
@@ -199,9 +199,9 @@ func (d *setDlg) createControls() {
 	y += 56
 
 	createGroup(d.hwnd, d.lang.ThemeGroup(), 12, y, 280, 48)
-	createRadio(d.hwnd, "Auto", 22, y+18, 60, 22, ID_THEME_A, d.cfg.IconTheme == "auto", true)
-	createRadio(d.hwnd, "Dark", 90, y+18, 60, 22, ID_THEME_D, d.cfg.IconTheme == "dark", false)
-	createRadio(d.hwnd, "Light", 170, y+18, 60, 22, ID_THEME_L, d.cfg.IconTheme == "light", false)
+	createRadio(d.hwnd, d.lang.ThemeAuto(), 22, y+18, 60, 22, ID_THEME_A, d.cfg.IconTheme == "auto", true)
+	createRadio(d.hwnd, d.lang.ThemeDark(), 90, y+18, 60, 22, ID_THEME_D, d.cfg.IconTheme == "dark", false)
+	createRadio(d.hwnd, d.lang.ThemeLight(), 170, y+18, 60, 22, ID_THEME_L, d.cfg.IconTheme == "light", false)
 	y += 56
 
 	createGroup(d.hwnd, d.lang.LanguageGroup(), 12, y, 270, 48)
