@@ -86,14 +86,22 @@ make rpm
 Just run the binary — it appears in the system tray.  
 Просто запустіть — з'явиться в системному треї.
 
-| Action / Дія | Result / Результат |
+| Action | Result |
 |---|---|---|
-| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) / Температура зі знаком +/- (напр. `+15°C`) |
-| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) / Детальна підказка (стан, відчувається як, вологість, вітер, тиск) |
-| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) / Відкриває **прогноз на 7 днів** (Windows: рідне вікно / Linux: вкладка браузера) |
-| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) / Відкриває **налаштування** (Windows: рідне вікно / Linux: вкладка браузера) |
-| **Menu → About** | Shows app info dialog / Вікно про програму |
-| **Menu → Quit** | Exits app / Виходить із програми |
+| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) |
+| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
+| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
+| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
+| **Menu → About** | Shows app info dialog |
+| **Menu → Quit** | Exits app |
+| | |
+| *Дія* | *Результат* |
+| **Піктограма** | Температура зі знаком +/- (напр. `+15°C`) |
+| **Наведення** | Детальна підказка (стан, відчувається як, вологість, вітер, тиск) |
+| **Меню → 7-денний прогноз** | Відкриває **прогноз на 7 днів** (Windows: рідне вікно / Linux: вкладка браузера) |
+| **Меню → Налаштування...** | Відкриває **налаштування** (Windows: рідне вікно / Linux: вкладка браузера) |
+| **Меню → About** | Вікно про програму |
+| **Меню → Вихід** | Виходить із програми |
 
 ### Settings / Налаштування
 
