@@ -32,8 +32,7 @@ Pre-built binaries: [Releases](https://github.com/JastRedPanda/Nimbus/releases)
 
 #### Debian / Ubuntu
 ```bash
-sudo dpkg -i nimbus_1.0.0-1_amd64.deb
-sudo apt-get install -f  # install dependencies / встановити залежності
+sudo apt install ./nimbus_1.0.0-1_amd64.deb
 ```
 
 #### RHEL / Rocky / Fedora
