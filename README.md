@@ -1,5 +1,7 @@
 # Nimbus
 
+![Nimbus](nimbus1.png)
+
 **Weather tray app** | **Інформер погоди в системному треї**
 
 Cross-platform: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).  
@@ -7,15 +9,15 @@ Languages: English, Українська
 
 ## Features / Можливості
 
-- Temperature text in system tray / Текст температури в системному треї
-- **7-day Forecast** — popup window (Windows) or web page (Linux) / Прогноз на 7 днів
-- **Settings GUI** — native window (Windows) or web form (Linux) / Вікно налаштувань
+- Temperature icon in system tray / Піктограма температури в системному треї
+- **7-day Forecast** — native window (Windows) or browser tab (Linux) / Прогноз на 7 днів
+- **Settings GUI** — native window (Windows) or browser tab (Linux) / Вікно налаштувань
 - Temperature unit: °C / °F
 - Pressure unit: hPa / mmHg / inHg
 - Wind unit: m/s / km/h
 - Font scale: slider 1–100% for tray text / Масштаб шрифту в треї
 - Update interval: 5 min – 24 hours
-- Window theme: Dark / Light
+- Window theme: Auto / Dark / Light
 - Language: English / Українська
 - No console window (Windows)
 
@@ -46,16 +48,23 @@ sudo zypper install nimbus-1.0.0-1.x86_64.rpm
 
 ### Requirements / Вимоги
 - Go 1.21+
-- Linux: GTK3 development headers (`libgtk-3-dev` / `gtk3-devel`)
+- Linux: `libgtk-3-dev` / `gtk3-devel`, `libayatana-appindicator3-dev` / `libappindicator-gtk3-devel`
 
 ### Windows
 ```bash
-go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=0.1.4 -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus.exe .
+go build -ldflags="-s -w -H windowsgui" -o nimbus.exe .
 ```
 
 ### Linux
 ```bash
-CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=0.1.4 -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
+CGO_ENABLED=1 go build -ldflags="-s -w" -o nimbus .
+```
+
+For release builds, inject version and date via ldflags:  
+Для релізних збірок версія та дата передаються через ldflags:
+```bash
+-X github.com/JastRedPanda/Nimbus/internal/build.Version=<version>
+-X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)
 ```
 
 ### Build packages / Збірка пакетів
@@ -77,18 +86,17 @@ Just run the binary — it appears in the system tray.
 
 | Action | Result |
 |---|---|
-| **Tray text** | Temperature with +/- sign (e.g. `+15°C`) |
+| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
-| **Left-click** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
-| **Right-click → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
-| **Right-click → Refresh now** | Forces weather update / Оновити погоду |
-| **Right-click → About** | Opens GitHub page |
-| **Right-click → Quit** | Exits app |
+| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
+| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
+| **Menu → About** | Shows app info dialog / Вікно про програму |
+| **Menu → Quit** | Exits app |
 
 ### Settings / Налаштування
 
-Available via **Right-click → Settings...** or system menu:  
-Доступно через **Правий клік → Налаштування...**
+Available via **Menu → Settings...**:  
+Доступно через **Меню → Налаштування...**
 
 - **Windows**: native GUI window with all controls
 - **Linux**: web form opened in default browser with local HTTP server
@@ -109,7 +117,7 @@ Auto-created at first run:
 Автоматично створюється при першому запуску:
 
 - **Windows**: `%APPDATA%\Nimbus\config.json`
-- **Linux**: `~/.config/nimbus/config.json`
+- **Linux**: `~/.config/Nimbus/config.json`
 
 ```json
 {
