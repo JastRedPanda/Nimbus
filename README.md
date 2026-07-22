@@ -5,6 +5,7 @@
 **Weather tray app** | **Інформер погоди в системному треї**
 
 Cross-platform: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).  
+Крос-платформа: Windows, Linux (Debian/Ubuntu, RHEL/Rocky/Fedora, openSUSE).  
 Languages: English, Українська
 
 ## Features / Можливості
@@ -19,19 +20,20 @@ Languages: English, Українська
 - Update interval: 5 min – 24 hours
 - Window theme: Auto / Dark / Light
 - Language: English / Українська
-- No console window (Windows)
+- No console window (Windows) / Без консольного вікна (Windows)
 
 ## Download / Завантажити
 
 ### Windows
-Pre-built binaries: [Releases](https://github.com/JastRedPanda/Nimbus/releases)
+Pre-built binaries: [Releases](https://github.com/JastRedPanda/Nimbus/releases)  
+Готові бінарники: [Releases](https://github.com/JastRedPanda/Nimbus/releases)
 
 ### Linux — distribution packages / Пакети для дистрибутивів
 
 #### Debian / Ubuntu
 ```bash
 sudo dpkg -i nimbus_1.0.0-1_amd64.deb
-sudo apt-get install -f  # install dependencies
+sudo apt-get install -f  # install dependencies / встановити залежності
 ```
 
 #### RHEL / Rocky / Fedora
@@ -85,21 +87,26 @@ Just run the binary — it appears in the system tray.
 Просто запустіть — з'явиться в системному треї.
 
 | Action | Result |
-|---|---|
+|---|---|---|
 | **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) |
+| | Температура зі знаком +/- (напр. `+15°C`) |
 | **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
+| | Детальна підказка (стан, відчувається як, вологість, вітер, тиск) |
 | **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
+| | Відкриває **прогноз на 7 днів** (Windows: рідне вікно / Linux: вкладка браузера) |
 | **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
+| | Відкриває **налаштування** (Windows: рідне вікно / Linux: вкладка браузера) |
 | **Menu → About** | Shows app info dialog / Вікно про програму |
 | **Menu → Quit** | Exits app |
+| | Виходить із програми |
 
 ### Settings / Налаштування
 
 Available via **Menu → Settings...**:  
 Доступно через **Меню → Налаштування...**
 
-- **Windows**: native GUI window with all controls
-- **Linux**: web form opened in default browser with local HTTP server
+- **Windows**: native GUI window with all controls / рідне вікно з усіма елементами
+- **Linux**: web form opened in default browser with local HTTP server / веб-форма в браузері з локальним HTTP-сервером
 
 Fields / Поля:
 - City name, latitude, longitude / Назва міста та координати
@@ -146,11 +153,13 @@ Auto-created at first run:
 | `language` | `en` / `uk` | UI language / Мова інтерфейсу |
 | `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
 
-## Weather API
+## Weather API / API погоди
 
 Uses [Open-Meteo](https://open-meteo.com/) — free, no API key required.  
-IP geolocation via [ip-api.com](http://ip-api.com/).
+Використовує [Open-Meteo](https://open-meteo.com/) — безкоштовно, без ключа API.  
+IP geolocation via [ip-api.com](http://ip-api.com/).  
+Геолокація за IP через [ip-api.com](http://ip-api.com/).
 
-## License
+## License / Ліцензія
 
 GNU General Public License v3.0
