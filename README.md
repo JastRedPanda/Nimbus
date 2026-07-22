@@ -45,6 +45,9 @@ sudo dnf install nimbus-1.0.0-1.x86_64.rpm
 sudo zypper install nimbus-1.0.0-1.x86_64.rpm
 ```
 
+_Commands above are examples — the actual package version may differ._  
+_Команди вище — приклади; актуальна версія пакета може відрізнятися._
+
 ## Build from source / Збірка з вихідного коду
 
 ### Requirements / Вимоги
