@@ -64,7 +64,7 @@ func (d *fcsDlg) run() {
 		wc := &win.WNDCLASSEX{
 			CbSize:        uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
 			Style:         win.CS_HREDRAW | win.CS_VREDRAW,
-			LpfnWndProc:   syscall.NewCallback(d.wndProc),
+			LpfnWndProc:   syscall.NewCallback(forecastWndProc),
 			HInstance:     d.inst,
 			HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
 			HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
@@ -89,7 +89,7 @@ func (d *fcsDlg) run() {
 	d.hwnd = win.CreateWindowEx(
 		0, syscall.StringToUTF16Ptr("NimbusForecastClass"), &title[0],
 		win.WS_CAPTION|win.WS_SYSMENU|win.WS_THICKFRAME|win.WS_MAXIMIZEBOX|win.WS_VISIBLE,
-		win.CW_USEDEFAULT, win.CW_USEDEFAULT, 640, 480, 0, 0, d.inst, nil,
+		win.CW_USEDEFAULT, win.CW_USEDEFAULT, 640, 480, 0, 0, d.inst, unsafe.Pointer(d),
 	)
 	if d.hwnd == 0 {
 		return
@@ -110,26 +110,37 @@ func (d *fcsDlg) run() {
 	}
 }
 
-func (d *fcsDlg) wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+func forecastWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+	if msg == win.WM_NCCREATE {
+		cs := (*win.CREATESTRUCT)(unsafe.Pointer(lParam))
+		win.SetWindowLongPtr(hwnd, win.GWLP_USERDATA, uintptr(cs.CreateParams))
+		return 1
+	}
+	ptr := win.GetWindowLongPtr(hwnd, win.GWLP_USERDATA)
+	if ptr == 0 {
+		return win.DefWindowProc(hwnd, msg, wParam, lParam)
+	}
+	dlg := (*fcsDlg)(unsafe.Pointer(ptr))
+
 	switch msg {
 	case win.WM_ERASEBKGND:
-		if d.dark {
-			eraseBg(hwnd, wParam, d.bgBrush)
+		if dlg.dark {
+			eraseBg(hwnd, wParam, dlg.bgBrush)
 			return 1
 		}
 		return 0
 	case win.WM_CTLCOLORSTATIC, win.WM_CTLCOLORBTN, win.WM_CTLCOLOREDIT, win.WM_CTLCOLORLISTBOX:
-		return handleCtlColor(hwnd, wParam, lParam, d.dark, d.bgBrush, d.edBrush)
+		return handleCtlColor(hwnd, wParam, lParam, dlg.dark, dlg.bgBrush, dlg.edBrush)
 	case win.WM_SIZE:
 		win.RedrawWindow(hwnd, nil, 0, win.RDW_INVALIDATE|win.RDW_ERASE|win.RDW_UPDATENOW)
 	case win.WM_PAINT:
-		d.onPaint(hwnd)
+		dlg.onPaint(hwnd)
 	case win.WM_CLOSE:
 		win.DestroyWindow(hwnd)
 	case win.WM_DESTROY:
-		if d.dark {
-			win.DeleteObject(win.HGDIOBJ(d.bgBrush))
-			win.DeleteObject(win.HGDIOBJ(d.edBrush))
+		if dlg.dark {
+			win.DeleteObject(win.HGDIOBJ(dlg.bgBrush))
+			win.DeleteObject(win.HGDIOBJ(dlg.edBrush))
 		}
 		win.PostQuitMessage(0)
 	}
