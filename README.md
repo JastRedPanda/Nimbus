@@ -88,20 +88,19 @@ Just run the binary — it appears in the system tray.
 
 | Action | Result |
 |---|---|---|
-| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) |
-| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
-| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
-| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
-| **Menu → About** | Shows app info dialog |
-| **Menu → Quit** | Exits app |
+| **Tray icon** | `+15°C` |
+| **Hover** | Temp, feels like, humidity, wind, pressure |
+| **Menu → 7-day Forecast** | Forecast popup (native / browser) |
+| **Menu → Settings...** | Settings window (native / browser) |
+| **Menu → About** | App info dialog |
+| **Menu → Quit** | Exit |
 
-**Українською:**  
-- **Піктограма** — температура зі знаком +/- (напр. `+15°C`)  
-- **Наведення** — детальна підказка (стан, відчувається як, вологість, вітер, тиск)  
-- **Меню → 7-денний прогноз** — прогноз на 7 днів (Windows: рідне вікно / Linux: вкладка браузера)  
-- **Меню → Налаштування...** — налаштування (Windows: рідне вікно / Linux: вкладка браузера)  
-- **Меню → About** — вікно про програму  
-- **Меню → Вихід** — вихід із програми
+- **Піктограма** — `+15°C`
+- **Наведення** — температура, вологість, вітер, тиск
+- **Меню → Прогноз** — прогноз на 7 днів
+- **Меню → Налаштування** — налаштування
+- **Меню → About** — вікно про програму
+- **Меню → Вихід** — вихід
 
 ### Settings / Налаштування
 
