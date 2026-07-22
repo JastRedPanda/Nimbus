@@ -1,6 +1,6 @@
 # Nimbus
 
-<img src="nimbus1.png" width="75%" alt="Nimbus">
+![Nimbus](nimbus1.png)
 
 **Weather tray app** | **Інформер погоди в системному треї**
 
