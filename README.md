@@ -137,9 +137,7 @@ Auto-created at first run:
 ## Weather API / API погоди
 
 Uses [Open-Meteo](https://open-meteo.com/) — free, no API key required.  
-Використовує [Open-Meteo](https://open-meteo.com/) — безкоштовно, без ключа API.  
-IP geolocation via [ip-api.com](http://ip-api.com/).  
-Геолокація за IP через [ip-api.com](http://ip-api.com/).
+IP geolocation via [ip-api.com](http://ip-api.com/).
 
 ## License / Ліцензія
 
