@@ -86,19 +86,14 @@ make rpm
 Just run the binary — it appears in the system tray.  
 Просто запустіть — з'явиться в системному треї.
 
-| Action | Result |
+| Action / Дія | Result / Результат |
 |---|---|---|
-| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) |
-| | Температура зі знаком +/- (напр. `+15°C`) |
-| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) |
-| | Детальна підказка (стан, відчувається як, вологість, вітер, тиск) |
-| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) |
-| | Відкриває **прогноз на 7 днів** (Windows: рідне вікно / Linux: вкладка браузера) |
-| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) |
-| | Відкриває **налаштування** (Windows: рідне вікно / Linux: вкладка браузера) |
+| **Tray icon** | Temperature with +/- sign (e.g. `+15°C`) / Температура зі знаком +/- (напр. `+15°C`) |
+| **Hover** | Detailed tooltip (condition, feels like, humidity, wind, pressure) / Детальна підказка (стан, відчувається як, вологість, вітер, тиск) |
+| **Menu → 7-day Forecast** | Opens **7-day Forecast** (Windows: native popup / Linux: browser tab) / Відкриває **прогноз на 7 днів** (Windows: рідне вікно / Linux: вкладка браузера) |
+| **Menu → Settings...** | Opens **Settings** (Windows: native window / Linux: browser tab) / Відкриває **налаштування** (Windows: рідне вікно / Linux: вкладка браузера) |
 | **Menu → About** | Shows app info dialog / Вікно про програму |
-| **Menu → Quit** | Exits app |
-| | Виходить із програми |
+| **Menu → Quit** | Exits app / Виходить із програми |
 
 ### Settings / Налаштування
 
