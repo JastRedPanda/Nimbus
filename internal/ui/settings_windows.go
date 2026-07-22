@@ -190,7 +190,7 @@ func (d *setDlg) createControls() {
 	createGroup(d.hwnd, d.lang.PressureGroup(), 12, y, 280, 48)
 	createRadio(d.hwnd, d.lang.HPa(), 22, y+18, 60, 22, ID_PRES_H, d.cfg.PressureUnit == "hpa", true)
 	createRadio(d.hwnd, d.lang.MmHg(), 90, y+18, 70, 22, ID_PRES_M, d.cfg.PressureUnit == "mmhg", false)
-	createRadio(d.hwnd, d.lang.InHg(), 170, y+18, 60, 22, ID_PRES_I, d.cfg.PressureUnit == "inhg", false)
+	createRadio(d.hwnd, d.lang.InHg(), 170, y+18, 110, 22, ID_PRES_I, d.cfg.PressureUnit == "inhg", false)
 	y += 56
 
 	createGroup(d.hwnd, d.lang.WindGroup(), 12, y, 180, 48)

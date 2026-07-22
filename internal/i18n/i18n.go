@@ -281,10 +281,16 @@ func (l Lang) MmHg() string {
 }
 
 func (l Lang) HPa() string {
+	if l == UK {
+		return "гПа"
+	}
 	return "hPa"
 }
 
 func (l Lang) InHg() string {
+	if l == UK {
+		return "дюйм. рт. ст."
+	}
 	return "inHg"
 }
 
@@ -322,7 +328,7 @@ func (l Lang) WeatherLine(emoji string, temp float64, unit string) string {
 
 func (l Lang) ForecastHeaders() []string {
 	if l == UK {
-		return []string{"День", "Погода", "Темп.", "Вітер", "Опади"}
+		return []string{"День", "Погода", "Температура", "Вітер", "Опади"}
 	}
 	return []string{"Day", "Condition", "Temp", "Wind", "Precip"}
 }
