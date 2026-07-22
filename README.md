@@ -81,27 +81,6 @@ make deb
 make rpm
 ```
 
-## Usage / Використання
-
-Just run the binary — it appears in the system tray.  
-Просто запустіть — з'явиться в системному треї.
-
-| Action | Result |
-|---|---|---|
-| **Tray icon** | `+15°C` |
-| **Hover** | Temp, feels like, humidity, wind, pressure |
-| **Menu → 7-day Forecast** | Forecast popup (native / browser) |
-| **Menu → Settings...** | Settings window (native / browser) |
-| **Menu → About** | App info dialog |
-| **Menu → Quit** | Exit |
-
-- **Піктограма** — `+15°C`
-- **Наведення** — температура, вологість, вітер, тиск
-- **Меню → Прогноз** — прогноз на 7 днів
-- **Меню → Налаштування** — налаштування
-- **Меню → About** — вікно про програму
-- **Меню → Вихід** — вихід
-
 ### Settings / Налаштування
 
 Available via **Menu → Settings...**:  
