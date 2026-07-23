@@ -107,7 +107,7 @@ func (d *setDlg) run() {
 			Style:         win.CS_HREDRAW | win.CS_VREDRAW,
 			LpfnWndProc:   syscall.NewCallback(d.wndProc),
 			HInstance:     d.inst,
-			HIcon:         win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION)),
+			HIcon:         win.LoadIcon(d.inst, win.MAKEINTRESOURCE(1)),
 			HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
 			HbrBackground: win.COLOR_BTNFACE + 1,
 			LpszClassName: &cn[0],
