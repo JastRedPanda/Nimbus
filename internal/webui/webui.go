@@ -26,11 +26,19 @@ var forecastContent string
 //go:embed about.html
 var aboutContent string
 
+//go:embed favicon.png
+var faviconBytes []byte
+
 var (
 	settingsTmpl = template.Must(template.New("settings").Parse(settingsContent))
 	forecastTmpl = template.Must(template.New("forecast").Parse(forecastContent))
 	aboutTmpl    = template.Must(template.New("about").Parse(aboutContent))
 )
+
+func faviconHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(faviconBytes)
+}
 
 func openURL(url string) {
 	switch runtime.GOOS {
@@ -61,6 +69,7 @@ func ShowSettings(cfg *config.Config) *config.Config {
 	res := make(chan *config.Config, 1)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/icon", faviconHandler)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		renderSettings(w, cfg)
 	})
@@ -96,6 +105,7 @@ func ShowAbout() {
 	openURL("http://" + addr + "/about")
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/icon", faviconHandler)
 	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
 		aboutTmpl.Execute(w, map[string]string{
 			"Version": build.Version,
@@ -115,6 +125,7 @@ func ShowForecast(lat, lon float64, units, lang, windUnit string) {
 	openURL("http://" + addr + "/forecast")
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/icon", faviconHandler)
 	mux.HandleFunc("/forecast", func(w http.ResponseWriter, r *http.Request) {
 		renderForecast(w, lat, lon, units, lang, windUnit)
 	})
