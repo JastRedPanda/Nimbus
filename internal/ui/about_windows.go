@@ -3,6 +3,10 @@
 package ui
 
 import (
+	"bytes"
+	_ "embed"
+	"image"
+	_ "image/png"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -10,10 +14,15 @@ import (
 	"github.com/lxn/win"
 )
 
+//go:embed about_logo.png
+var aboutLogoPNG []byte
+
+var aboutLogoBitmap win.HBITMAP
+var aboutLogoW, aboutLogoH int32
+
 type aboutDlg struct {
 	hwnd    win.HWND
 	inst    win.HINSTANCE
-	hicon   win.HANDLE
 	dark    bool
 	bgBrush win.HBRUSH
 }
@@ -21,7 +30,49 @@ type aboutDlg struct {
 var (
 	aboutClassOnce sync.Once
 	aboutClassOK   bool
+	aboutClassInst win.HINSTANCE
 )
+
+func initAboutLogo() {
+	img, _, err := image.Decode(bytes.NewReader(aboutLogoPNG))
+	if err != nil {
+		return
+	}
+	bounds := img.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+	aboutLogoW = int32(w)
+	aboutLogoH = int32(h)
+
+	bmi := &win.BITMAPINFOHEADER{
+		BiSize:     uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
+		BiWidth:    int32(w),
+		BiHeight:   -int32(h),
+		BiPlanes:   1,
+		BiBitCount: 32,
+		BiCompression: win.BI_RGB,
+	}
+
+	var bits unsafe.Pointer
+	hbm := win.CreateDIBSection(0, bmi, win.DIB_RGB_COLORS, &bits, 0, 0)
+	if hbm == 0 || bits == nil {
+		return
+	}
+
+	pixels := (*[1 << 30]byte)(bits)
+	stride := w * 4
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			off := y*stride + x*4
+			pixels[off+0] = byte(b >> 8)
+			pixels[off+1] = byte(g >> 8)
+			pixels[off+2] = byte(r >> 8)
+			pixels[off+3] = byte(a >> 8)
+		}
+	}
+	aboutLogoBitmap = hbm
+}
 
 func ShowAbout(theme string) {
 	dark := theme == "dark"
@@ -52,6 +103,7 @@ func (d *aboutDlg) run() {
 		}
 		if win.RegisterClassEx(wc) != 0 {
 			aboutClassOK = true
+			aboutClassInst = d.inst
 		}
 	})
 
@@ -59,9 +111,11 @@ func (d *aboutDlg) run() {
 		return
 	}
 
-	d.hicon = win.LoadImage(d.inst, win.MAKEINTRESOURCE(1), win.IMAGE_ICON, 64, 64, win.LR_DEFAULTCOLOR)
+	if aboutLogoBitmap == 0 {
+		initAboutLogo()
+	}
 
-	const winW, winH = 320, 240
+	const winW, winH = 320, 260
 	d.hwnd = win.CreateWindowEx(
 		0, syscall.StringToUTF16Ptr("NimbusAboutClass"), syscall.StringToUTF16Ptr("About Nimbus"),
 		win.WS_CAPTION|win.WS_SYSMENU|win.WS_VISIBLE,
@@ -142,14 +196,18 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 	win.SetTextColor(hdc, win.COLORREF(txtColor))
 	win.SetBkMode(hdc, win.TRANSPARENT)
 
-	iconY := int32(24)
-	iconSize := int32(64)
-	iconX := (cw - iconSize) / 2
-	if d.hicon != 0 {
-		win.DrawIconEx(hdc, iconX, iconY, win.HICON(d.hicon), iconSize, iconSize, 0, 0, win.DI_NORMAL)
+	if aboutLogoBitmap != 0 {
+		memDC := win.CreateCompatibleDC(hdc)
+		if memDC != 0 {
+			old := win.SelectObject(memDC, win.HGDIOBJ(aboutLogoBitmap))
+			imgX := (cw - aboutLogoW) / 2
+			win.BitBlt(hdc, imgX, 20, aboutLogoW, aboutLogoH, memDC, 0, 0, win.SRCCOPY)
+			win.SelectObject(memDC, old)
+			win.DeleteDC(memDC)
+		}
 	}
 
-	titleY := iconY + iconSize + 16
+	titleY := int32(20) + aboutLogoH + 16
 	lf := &win.LOGFONT{
 		LfHeight:        -24,
 		LfWeight:        win.FW_BOLD,
@@ -163,20 +221,17 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 	if titleFont != 0 {
 		win.SelectObject(hdc, win.HGDIOBJ(titleFont))
 	}
-
 	titleText := syscall.StringToUTF16("Nimbus")
 	tr := &win.RECT{Left: 0, Top: titleY, Right: cw, Bottom: titleY + 32}
 	win.DrawTextEx(hdc, &titleText[0], -1, tr, win.DT_CENTER|win.DT_VCENTER|win.DT_SINGLELINE, nil)
-
 	if titleFont != 0 {
 		win.SelectObject(hdc, win.GetStockObject(win.DEFAULT_GUI_FONT))
 		win.DeleteObject(win.HGDIOBJ(titleFont))
 	}
 
 	subY := titleY + 36
-	fontH := -15
 	lf2 := &win.LOGFONT{
-		LfHeight:        int32(fontH),
+		LfHeight:        -15,
 		LfWeight:        win.FW_NORMAL,
 		LfCharSet:       win.DEFAULT_CHARSET,
 		LfOutPrecision:  win.OUT_DEFAULT_PRECIS,
@@ -188,11 +243,9 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 	if subFont != 0 {
 		win.SelectObject(hdc, win.HGDIOBJ(subFont))
 	}
-
 	subText := syscall.StringToUTF16("Мультиплатформний інформер погоди.")
 	sr := &win.RECT{Left: 20, Top: subY, Right: cw - 20, Bottom: subY + 40}
 	win.DrawTextEx(hdc, &subText[0], -1, sr, win.DT_CENTER|win.DT_WORDBREAK, nil)
-
 	if subFont != 0 {
 		win.DeleteObject(win.HGDIOBJ(subFont))
 	}
