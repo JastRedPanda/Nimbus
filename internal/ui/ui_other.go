@@ -15,6 +15,6 @@ func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	webui.ShowForecast(lat, lon, units, lang, windUnit)
 }
 
-func ShowAbout() {
+func ShowAbout(theme string) {
 	webui.ShowAbout()
 }

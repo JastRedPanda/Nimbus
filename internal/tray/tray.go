@@ -55,7 +55,7 @@ func (a *app) handleMenu() {
 		case <-a.mSettings.ClickedCh:
 			a.openSettings()
 		case <-a.mAbout.ClickedCh:
-			ui.ShowAbout()
+			ui.ShowAbout(a.cfg.IconTheme)
 		case <-a.mQuit.ClickedCh:
 			systray.Quit()
 			return
