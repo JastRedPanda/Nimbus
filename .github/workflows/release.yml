@@ -75,13 +75,13 @@ jobs:
           find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \; 2>/dev/null || true
       - name: Sign packages
         run: |
-          # Sign DEB
-          # Note: debian packages usually require .changes file for proper signing
-          # Signing just the .deb for now as a simple approach
-          gpg --batch --passphrase '' --detach-sign --armor dist/*.deb
-          # Sign RPM
-          echo "%_gpg_name nimbus-ci" > ~/.rpmmacros
-          rpm --addsign dist/*.rpm
+          if ls dist/*.deb 2>/dev/null; then
+            gpg --batch --passphrase '' --detach-sign --armor dist/*.deb
+          fi
+          if ls dist/*.rpm 2>/dev/null; then
+            echo "%_gpg_name nimbus-ci" > ~/.rpmmacros
+            rpm --addsign dist/*.rpm
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: nimbus-linux
