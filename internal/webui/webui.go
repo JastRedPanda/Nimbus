@@ -32,7 +32,22 @@ var faviconBytes []byte
 var aboutLogoBytes []byte
 
 var (
-	settingsTmpl = template.Must(template.New("settings").Parse(settingsContent))
+	settingsTmpl = template.Must(template.New("settings").Funcs(template.FuncMap{
+		"chk": func(v, target string) string {
+			if v == target {
+				return "checked"
+			}
+			return ""
+		},
+		"sel": func(list []string, v string) string {
+			for _, x := range list {
+				if x == v {
+					return "selected"
+				}
+			}
+			return ""
+		},
+	}).Parse(settingsContent))
 	forecastTmpl = template.Must(template.New("forecast").Parse(forecastContent))
 	aboutTmpl    = template.Must(template.New("about").Parse(aboutContent))
 )
@@ -154,21 +169,6 @@ func renderSettings(w io.Writer, cfg *config.Config) {
 		{1440, "24 hours"},
 	}
 
-	sel := func(list []string, v string) string {
-		for _, x := range list {
-			if x == v {
-				return "selected"
-			}
-		}
-		return ""
-	}
-	chk := func(v, target string) string {
-		if v == target {
-			return "checked"
-		}
-		return ""
-	}
-
 	data := map[string]interface{}{
 		"cfg":         cfg,
 		"t":           t,
@@ -178,8 +178,6 @@ func renderSettings(w io.Writer, cfg *config.Config) {
 		"themes":      themes,
 		"langs":       langs,
 		"intervals":   intervals,
-		"sel":         sel,
-		"chk":         chk,
 		"fontScale":   cfg.FontScale,
 		"updateInt":   cfg.UpdateInterval,
 		"tempUnit":    cfg.Units,
