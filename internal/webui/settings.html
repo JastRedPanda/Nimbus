@@ -7,14 +7,20 @@
 <title>Nimbus</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f0;color:#111;padding:20px;max-width:480px;margin:0 auto}
-h1{text-align:center;font-size:18px;margin-bottom:20px;color:#555}
-fieldset{border:1px solid #ccc;border-radius:8px;padding:14px;margin-bottom:14px;background:#fff}
-legend{font-size:14px;font-weight:600;color:#666;padding:0 6px}
+:root{--bg:#f0f0f0;--fg:#111;--card:#fff;--border:#ccc;--legend:#666;--label:#555;--h1:#555;--val:#888;--btn-bg:#fff}
+{{if eq .iconTheme "dark"}}
+:root{--bg:#1c1c1e;--fg:#eee;--card:#2c2c2e;--border:#444;--legend:#aaa;--label:#aaa;--h1:#aaa;--val:#888;--btn-bg:#333}
+{{else if eq .iconTheme "auto"}}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--fg:#eee;--card:#2c2c2e;--border:#444;--legend:#aaa;--label:#aaa;--h1:#aaa;--val:#888;--btn-bg:#333}}
+{{end}}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--fg);padding:20px;max-width:480px;margin:0 auto}
+h1{text-align:center;font-size:18px;margin-bottom:20px;color:var(--h1)}
+fieldset{border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px;background:var(--card)}
+legend{font-size:14px;font-weight:600;color:var(--legend);padding:0 6px}
 .row{display:flex;align-items:center;margin-bottom:8px;gap:8px}
 .row:last-child{margin-bottom:0}
-label{flex:0 0 100px;font-size:13px;color:#555}
-input[type=text],input[type=number],select{flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px}
+label{flex:0 0 100px;font-size:13px;color:var(--label)}
+input[type=text],input[type=number],select{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;background:var(--card);color:var(--fg)}
 input[type=range]{flex:1}
 .radio-group{display:flex;gap:6px;flex-wrap:wrap}
 .radio-group label{flex:0;font-size:13px}
@@ -26,7 +32,7 @@ input[type=range]{flex:1}
 .btn-save:hover{background:#1a5cd0}
 .btn-cancel:hover{background:#666}
 .btn-del:hover{background:#a93226}
-.val{font-size:13px;color:#888;width:36px;text-align:right}
+.val{font-size:13px;color:var(--val);width:36px;text-align:right}
 </style>
 </head>
 <body>

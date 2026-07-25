@@ -12,9 +12,9 @@ func ShowSettings(cfg *config.Config, onFontChange func(int)) *config.Config {
 }
 
 func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
-	webui.ShowForecast(lat, lon, units, lang, windUnit)
+	webui.ShowForecast(lat, lon, units, lang, theme, windUnit)
 }
 
 func ShowAbout(theme string) {
-	webui.ShowAbout()
+	webui.ShowAbout(theme)
 }

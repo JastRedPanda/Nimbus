@@ -131,7 +131,7 @@ func ShowSettings(cfg *config.Config) *config.Config {
 	}
 }
 
-func ShowAbout() {
+func ShowAbout(theme string) {
 	l := listen()
 	if l == nil {
 		return
@@ -146,12 +146,12 @@ func ShowAbout() {
 		w.Write(aboutLogoBytes)
 	})
 	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
-		aboutTmpl.Execute(w, nil)
+		aboutTmpl.Execute(w, map[string]string{"iconTheme": theme})
 	})
 	http.Serve(l, mux)
 }
 
-func ShowForecast(lat, lon float64, units, lang, windUnit string) {
+func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	l := listen()
 	if l == nil {
 		return
@@ -163,7 +163,7 @@ func ShowForecast(lat, lon float64, units, lang, windUnit string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/icon", faviconHandler)
 	mux.HandleFunc("/forecast", func(w http.ResponseWriter, r *http.Request) {
-		renderForecast(w, lat, lon, units, lang, windUnit)
+		renderForecast(w, lat, lon, units, lang, theme, windUnit)
 	})
 	go http.Serve(l, mux)
 }
@@ -210,7 +210,7 @@ func renderSettings(w io.Writer, cfg *config.Config) {
 	settingsTmpl.Execute(w, data)
 }
 
-func renderForecast(w io.Writer, lat, lon float64, units, lang, windUnit string) {
+func renderForecast(w io.Writer, lat, lon float64, units, lang, theme, windUnit string) {
 	data, err := weather.FetchDaily(lat, lon)
 	if err != nil || len(data) == 0 {
 		io.WriteString(w, "<html><body><p>Failed to load forecast.</p></body></html>")
@@ -258,8 +258,9 @@ func renderForecast(w io.Writer, lat, lon float64, units, lang, windUnit string)
 		})
 	}
 	forecastTmpl.Execute(w, map[string]interface{}{
-		"title": title,
-		"rows":  rows,
+		"title":     title,
+		"rows":      rows,
+		"iconTheme": theme,
 	})
 }
 
