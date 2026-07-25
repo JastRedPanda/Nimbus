@@ -13,8 +13,10 @@ deb: build-linux
 	mkdir -p dist/debian/nimbus/DEBIAN
 	mkdir -p dist/debian/nimbus/usr/bin
 	mkdir -p dist/debian/nimbus/usr/share/applications
+	mkdir -p dist/debian/nimbus/usr/share/pixmaps
 	install -m 755 nimbus dist/debian/nimbus/usr/bin/
 	install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
+	install -m 644 nimbus1.png dist/debian/nimbus/usr/share/pixmaps/nimbus.png
 	sed 's/^Version:.*/Version: $(VERSION)/' dist/debian/control > dist/debian/nimbus/DEBIAN/control
 	dpkg-deb --build dist/debian/nimbus dist/$(DEB_NAME)
 	@echo ""

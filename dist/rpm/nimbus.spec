@@ -46,11 +46,16 @@ Exec=nimbus
 Terminal=false
 Categories=Utility;
 StartupNotify=false
+Icon=nimbus
 EOF
+
+mkdir -p %{buildroot}%{_datadir}/pixmaps
+install -m 644 nimbus1.png %{buildroot}%{_datadir}/pixmaps/nimbus.png
 
 %files
 %{_bindir}/nimbus
 %{_datadir}/applications/nimbus.desktop
+%{_datadir}/pixmaps/nimbus.png
 
 %changelog
 * Mon Jul 21 2026 JastRedPanda <jastredpanda@users.noreply.github.com> - 1.0.0-1

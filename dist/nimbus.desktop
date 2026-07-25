@@ -6,3 +6,4 @@ Exec=nimbus
 Terminal=false
 Categories=Utility;
 StartupNotify=false
+Icon=nimbus
