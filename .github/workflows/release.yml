@@ -58,16 +58,18 @@ jobs:
           mkdir -p dist/debian/nimbus/DEBIAN
           mkdir -p dist/debian/nimbus/usr/bin
           mkdir -p dist/debian/nimbus/usr/share/applications
+          mkdir -p dist/debian/nimbus/usr/share/pixmaps
           install -m 755 nimbus dist/debian/nimbus/usr/bin/
           install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
-          install -m 644 dist/debian/control dist/debian/nimbus/DEBIAN/
+          install -m 644 nimbus1.png dist/debian/nimbus/usr/share/pixmaps/nimbus.png
+          sed 's/^Version:.*/Version: ${VER}/' dist/debian/control > dist/debian/nimbus/DEBIAN/control
           dpkg-deb --build dist/debian/nimbus "dist/nimbus_${VER}-1_amd64.deb"
       - name: Build .rpm
         run: |
           VER="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${VER#v}"
           mkdir -p dist/rpm/BUILD/build-rpm dist/rpm/RPMS dist/rpm/SRPMS
-          cp nimbus dist/rpm/BUILD/build-rpm/
+          cp nimbus nimbus1.png dist/rpm/BUILD/build-rpm/
           sed "s/^Version:.*/Version: ${VERSION}/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
           rpmbuild -bb --nodeps --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>&1 || true
           find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \; 2>/dev/null || true
