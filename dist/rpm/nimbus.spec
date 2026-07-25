@@ -50,7 +50,7 @@ Icon=nimbus
 EOF
 
 mkdir -p %{buildroot}%{_datadir}/pixmaps
-install -m 644 nimbus1.png %{buildroot}%{_datadir}/pixmaps/nimbus.png
+install -m 644 build-rpm/nimbus1.png %{buildroot}%{_datadir}/pixmaps/nimbus.png
 
 %files
 %{_bindir}/nimbus
