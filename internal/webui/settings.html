@@ -34,10 +34,52 @@ input[type=range]{flex:1}
 <form action="/save" method="post">
 <fieldset>
 <legend>{{if eq .t.String "uk"}}Місто{{else}}City{{end}}</legend>
-<div class="row"><label>{{if eq .t.String "uk"}}Назва{{else}}Name{{end}}</label><input type="text" name="city_name" value="{{.cityName}}"></div>
-<div class="row"><label>{{if eq .t.String "uk"}}Широта{{else}}Latitude{{end}}</label><input type="text" name="latitude" value="{{.latitude}}"></div>
-<div class="row"><label>{{if eq .t.String "uk"}}Довгота{{else}}Longitude{{end}}</label><input type="text" name="longitude" value="{{.longitude}}"></div>
+<div class="row" style="gap:4px">
+<label>{{if eq .t.String "uk"}}Назва{{else}}Name{{end}}</label>
+<input type="text" name="city_name" id="cityInput" value="{{.cityName}}" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCity()}">
+<button type="button" id="searchBtn" onclick="searchCity()" style="padding:6px 12px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;font-size:13px">{{if eq .t.String "uk"}}Пошук{{else}}Search{{end}}</button>
+</div>
+<div id="results" style="max-height:150px;overflow-y:auto;margin-bottom:8px;display:none"></div>
+<div class="row"><label>{{if eq .t.String "uk"}}Широта{{else}}Latitude{{end}}</label><input type="text" name="latitude" id="latInput" value="{{.latitude}}"></div>
+<div class="row"><label>{{if eq .t.String "uk"}}Довгота{{else}}Longitude{{end}}</label><input type="text" name="longitude" id="lonInput" value="{{.longitude}}"></div>
 </fieldset>
+
+<script>
+function searchCity(){
+	var q=document.getElementById('cityInput').value.trim()
+	if(!q)return
+	var btn=document.getElementById('searchBtn')
+	btn.disabled=true
+	btn.textContent='{{if eq .t.String "uk"}}Пошук...{{else}}Search...{{end}}'
+	fetch('/api/search?q='+encodeURIComponent(q)).then(function(r){return r.json()}).then(function(data){
+		var el=document.getElementById('results')
+		el.innerHTML=''
+		if(!data||data.length===0){
+			el.style.display='block'
+			el.innerHTML='<div style="padding:8px;color:#888;font-size:13px">{{if eq .t.String "uk"}}Нічого не знайдено{{else}}No results{{end}}</div>'
+			return
+		}
+		data.forEach(function(c){
+			var d=document.createElement('div')
+			d.textContent=c.name+', '+c.country+' | '+c.latitude.toFixed(4)+', '+c.longitude.toFixed(4)
+			d.style.cssText='padding:6px 8px;cursor:pointer;font-size:13px;border-bottom:1px solid #eee'
+			d.onmouseover=function(){this.style.background='#e8f0fe'}
+			d.onmouseout=function(){this.style.background=''}
+			d.onclick=function(){
+				document.getElementById('cityInput').value=c.name
+				document.getElementById('latInput').value=c.latitude.toFixed(4)
+				document.getElementById('lonInput').value=c.longitude.toFixed(4)
+				document.getElementById('results').style.display='none'
+			}
+			el.appendChild(d)
+		})
+		el.style.display='block'
+	}).finally(function(){
+		btn.disabled=false
+		btn.textContent='{{if eq .t.String "uk"}}Пошук{{else}}Search{{end}}'
+	})
+}
+</script>
 
 <fieldset>
 <legend>{{if eq .t.String "uk"}}Температура{{else}}Temperature{{end}}</legend>

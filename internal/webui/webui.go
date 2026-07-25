@@ -2,6 +2,7 @@ package webui
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -87,6 +88,23 @@ func ShowSettings(cfg *config.Config) *config.Config {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/icon", faviconHandler)
+	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if q == "" {
+			json.NewEncoder(w).Encode([]weather.GeoResult{})
+			return
+		}
+		lang := "en"
+		if cfg.Language == "uk" {
+			lang = "uk"
+		}
+		res, err := weather.SearchCity(q, lang)
+		if err != nil || res == nil {
+			res = []weather.GeoResult{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(res)
+	})
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		renderSettings(w, cfg)
 	})
