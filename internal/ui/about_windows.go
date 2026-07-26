@@ -45,11 +45,11 @@ func initAboutLogo() {
 	aboutLogoH = int32(h)
 
 	bmi := &win.BITMAPINFOHEADER{
-		BiSize:     uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
-		BiWidth:    int32(w),
-		BiHeight:   -int32(h),
-		BiPlanes:   1,
-		BiBitCount: 32,
+		BiSize:        uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
+		BiWidth:       int32(w),
+		BiHeight:      -int32(h),
+		BiPlanes:      1,
+		BiBitCount:    32,
 		BiCompression: win.BI_RGB,
 	}
 
@@ -74,7 +74,7 @@ func initAboutLogo() {
 	aboutLogoBitmap = hbm
 }
 
-func ShowAbout(theme string) {
+func showAbout(theme string) {
 	dark := theme == "dark"
 	d := &aboutDlg{dark: dark}
 	if dark {
@@ -209,12 +209,12 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 
 	titleY := int32(20) + aboutLogoH + 16
 	lf := &win.LOGFONT{
-		LfHeight:        -24,
-		LfWeight:        win.FW_BOLD,
-		LfCharSet:       win.DEFAULT_CHARSET,
-		LfOutPrecision:  win.OUT_DEFAULT_PRECIS,
-		LfClipPrecision: win.CLIP_DEFAULT_PRECIS,
-		LfQuality:       win.CLEARTYPE_QUALITY,
+		LfHeight:         -24,
+		LfWeight:         win.FW_BOLD,
+		LfCharSet:        win.DEFAULT_CHARSET,
+		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
+		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
+		LfQuality:        win.CLEARTYPE_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
 	titleFont := win.CreateFontIndirect(lf)
@@ -231,12 +231,12 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 
 	subY := titleY + 36
 	lf2 := &win.LOGFONT{
-		LfHeight:        -15,
-		LfWeight:        win.FW_NORMAL,
-		LfCharSet:       win.DEFAULT_CHARSET,
-		LfOutPrecision:  win.OUT_DEFAULT_PRECIS,
-		LfClipPrecision: win.CLIP_DEFAULT_PRECIS,
-		LfQuality:       win.CLEARTYPE_QUALITY,
+		LfHeight:         -15,
+		LfWeight:         win.FW_NORMAL,
+		LfCharSet:        win.DEFAULT_CHARSET,
+		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
+		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
+		LfQuality:        win.CLEARTYPE_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
 	subFont := win.CreateFontIndirect(lf2)

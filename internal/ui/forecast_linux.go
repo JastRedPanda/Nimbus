@@ -38,7 +38,7 @@ var forecastWindow gtk.Window
 // forecast is fetched on its own goroutine because the caller is the tray's
 // single menu-dispatch loop, and a blocking 10s HTTP call there would freeze
 // Settings, About and Quit along with it.
-func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
+func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	if !gtk.Ready() {
 		webui.ShowForecast(lat, lon, units, lang, theme, windUnit)
 		return

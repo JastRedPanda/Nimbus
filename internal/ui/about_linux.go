@@ -35,7 +35,7 @@ var (
 
 // ShowAbout opens the About window and returns immediately; the window is
 // built on the GTK main loop thread.
-func ShowAbout(theme string) {
+func showAbout(theme string) {
 	if !gtk.Ready() {
 		// No usable GTK on this machine. Degrade to the browser UI rather than
 		// leaving the menu item doing nothing at all.

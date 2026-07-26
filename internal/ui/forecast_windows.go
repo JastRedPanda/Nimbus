@@ -31,7 +31,7 @@ var (
 	forecastClassOK   bool
 )
 
-func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
+func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	data, err := weather.FetchDaily(lat, lon)
 	if err != nil || len(data) == 0 {
 		showError("Failed to load forecast data.")
@@ -202,12 +202,12 @@ func (d *fcsDlg) onPaint(hwnd win.HWND) {
 		dataFontH = 20
 	}
 	lf := &win.LOGFONT{
-		LfHeight:        -dataFontH,
-		LfWeight:        win.FW_NORMAL,
-		LfCharSet:       win.DEFAULT_CHARSET,
-		LfOutPrecision:  win.OUT_DEFAULT_PRECIS,
-		LfClipPrecision: win.CLIP_DEFAULT_PRECIS,
-		LfQuality:       win.CLEARTYPE_QUALITY,
+		LfHeight:         -dataFontH,
+		LfWeight:         win.FW_NORMAL,
+		LfCharSet:        win.DEFAULT_CHARSET,
+		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
+		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
+		LfQuality:        win.CLEARTYPE_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
 	dataFont := win.HGDIOBJ(win.CreateFontIndirect(lf))
@@ -236,12 +236,12 @@ func (d *fcsDlg) onPaint(hwnd win.HWND) {
 	}
 	wiFace := "Weather Icons"
 	wfl := &win.LOGFONT{
-		LfHeight:        int32(-wiH),
-		LfWeight:        win.FW_NORMAL,
-		LfCharSet:       win.DEFAULT_CHARSET,
-		LfOutPrecision:  win.OUT_DEFAULT_PRECIS,
-		LfClipPrecision: win.CLIP_DEFAULT_PRECIS,
-		LfQuality:       win.DEFAULT_QUALITY,
+		LfHeight:         int32(-wiH),
+		LfWeight:         win.FW_NORMAL,
+		LfCharSet:        win.DEFAULT_CHARSET,
+		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
+		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
+		LfQuality:        win.DEFAULT_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
 	copy(wfl.LfFaceName[:], syscall.StringToUTF16(wiFace))
@@ -306,4 +306,3 @@ func (d *fcsDlg) onPaint(hwnd win.HWND) {
 		win.DeleteObject(dataFont)
 	}
 }
-

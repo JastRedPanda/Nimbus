@@ -13,7 +13,7 @@ var (
 	dwmDLL                    = syscall.NewLazyDLL("dwmapi.dll")
 	dwmSetWindowAttributeProc = dwmDLL.NewProc("DwmSetWindowAttribute")
 
-	gdi32DLL           = syscall.NewLazyDLL("gdi32.dll")
+	gdi32DLL             = syscall.NewLazyDLL("gdi32.dll")
 	createSolidBrushProc = gdi32DLL.NewProc("CreateSolidBrush")
 	createPenProc        = gdi32DLL.NewProc("CreatePen")
 

@@ -8,9 +8,10 @@ import (
 
 	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
+	"github.com/JastRedPanda/Nimbus/internal/gui"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/icons"
-	"github.com/JastRedPanda/Nimbus/internal/ui"
+	_ "github.com/JastRedPanda/Nimbus/internal/ui" // registers the GUI backends
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 )
 
@@ -55,7 +56,7 @@ func (a *app) handleMenu() {
 		case <-a.mSettings.ClickedCh:
 			a.openSettings()
 		case <-a.mAbout.ClickedCh:
-			ui.ShowAbout(a.cfg.IconTheme)
+			gui.Current().About(a.cfg.IconTheme)
 		case <-a.mQuit.ClickedCh:
 			quit()
 			return
@@ -98,12 +99,19 @@ func (a *app) updateIcon(fontScale int) {
 }
 
 func (a *app) showForecast() {
-	ui.ShowForecast(a.cfg.Latitude, a.cfg.Longitude, a.cfg.Units, a.cfg.Language, a.cfg.IconTheme, a.cfg.WindUnit)
+	gui.Current().Forecast(gui.Forecast{
+		Lat:      a.cfg.Latitude,
+		Lon:      a.cfg.Longitude,
+		Units:    a.cfg.Units,
+		Lang:     a.cfg.Language,
+		Theme:    a.cfg.IconTheme,
+		WindUnit: a.cfg.WindUnit,
+	})
 }
 
 func (a *app) openSettings() {
 	go func() {
-		nc := ui.ShowSettings(a.cfg, func(fs int) { a.updateIcon(fs) })
+		nc := gui.Current().Settings(a.cfg, func(fs int) { a.updateIcon(fs) })
 		if nc == nil {
 			return
 		}

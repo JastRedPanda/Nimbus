@@ -74,7 +74,7 @@ type setDlg struct {
 	fontScaleLabel win.HWND
 }
 
-func ShowSettings(cfg *config.Config, onFontChange func(int)) *config.Config {
+func showSettings(cfg *config.Config, onFontChange func(int)) *config.Config {
 	dark := cfg.IconTheme == "dark"
 	d := &setDlg{cfg: cfg, lang: i18n.ParseLang(cfg.Language), result: make(chan *config.Config, 1), dark: dark, onFontChange: onFontChange}
 	if dark {
