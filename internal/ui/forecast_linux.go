@@ -3,27 +3,51 @@
 package ui
 
 import (
-	"fmt"
 	"image/color"
 	"log"
+	"time"
 
+	"github.com/JastRedPanda/Nimbus/internal/fonts"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
-	"github.com/JastRedPanda/Nimbus/internal/wicons"
 )
+
+// The 7-day forecast panel, GTK edition.
+//
+// The CONTENT is a plain five-column table: one header row, a rule, then seven
+// data rows separated by hairlines. No summary header and no cards - that layout
+// was tried and reverted. The CHROME around it is the panel work and stays:
+// undecorated, off the taskbar, above other windows, translucent only where a
+// compositor can actually composite it, placed at the work-area corner nearest
+// the click, and dismissed by Escape, by focus loss, or by its own × button.
+//
+// Every metric is shared with the Win32 backend value for value - see the
+// constants below and the stylesheet in style_linux.go, whose numbers
+// forecast_windows.go carries as named constants of its own. The point of the
+// two files is that the two platforms look like one product.
 
 const (
 	forecastWidth = 620
-	// -1 lets the panel hug its content. A fixed height would stretch the day
-	// cards and leave their contents clinging to the top edge.
+	// -1 lets the panel hug its content. A fixed height would stretch the table
+	// rows over whatever height was guessed.
 	forecastHeight = -1
 
-	// Icon sizes in layout points. Both double cleanly into an embedded asset
-	// on a HiDPI screen (64 -> 128, 32 -> 64), which is why the header icon is
-	// not larger: there is no 256px artwork to draw it sharply at scale 2.
-	heroIconPt = 64
-	dayIconPt  = 32
+	// Weather-symbol size in layout points. Unlike the colour artwork this
+	// replaced, the glyph is rasterised at whatever size is asked for, so a
+	// HiDPI screen simply gets scale times as many pixels rather than the
+	// nearest available asset.
+	symbolPt = 20
+
+	// Grid metrics. These live in Go rather than in the stylesheet because GTK
+	// grid spacing is a widget property, not a style property - CSS cannot set
+	// it. Counterparts in forecast_windows.go: rowGapY, colGapX.
+	rowGapY = 6
+	colGapX = 18
+
+	// Page VBox spacing: the close-button row to the table. Counterpart:
+	// pageGapY.
+	pageGapY = 2
 
 	forecastWindowID = "nimbus-forecast"
 
@@ -31,10 +55,49 @@ const (
 	panelMargin = 12
 )
 
-// forecastWindow is read and written only on the GTK thread.
-var forecastWindow gtk.Window
+// closeGlyph is the panel's own close affordance. With no title bar there is no
+// system close button, so the panel supplies one, exactly as the Win32 panel
+// does.
+const closeGlyph = "×" // MULTIPLICATION SIGN
 
-// ShowForecast opens the 7-day forecast panel. It returns immediately: the
+// colAlign is the horizontal alignment of each table column, applied to both the
+// header caption and the cells under it so a column reads as one thing. Day
+// reads as a label and sits left; the symbol is centred in its column; the three
+// numeric columns are right aligned so their digits line up, which is the whole
+// reason a table beats a row of cards.
+var colAlign = [...]int{
+	gtk.AlignStart,  // Day
+	gtk.AlignCenter, // Condition
+	gtk.AlignEnd,    // Temp
+	gtk.AlignEnd,    // Wind
+	gtk.AlignEnd,    // Precip
+}
+
+// Both are read and written only on the GTK thread. forecastClosedAt is when the
+// panel last went away on its own, which the tray toggle needs to tell a closing
+// click from an opening one.
+var (
+	forecastWindow   gtk.Window
+	forecastClosedAt time.Time
+)
+
+// closeOpenPanel makes the tray icon a toggle: if the panel is up, the click
+// that would have opened it closes it instead. It reports whether it consumed
+// the click, and must run on the GTK thread.
+func closeOpenPanel() bool {
+	if forecastWindow != 0 {
+		forecastWindow.Destroy()
+		return true
+	}
+	if !forecastClosedAt.IsZero() && time.Since(forecastClosedAt) < toggleGrace {
+		// Worth a line: to the user this click did nothing at all.
+		log.Print("forecast: click within the toggle grace period, treated as the closing click")
+		return true
+	}
+	return false
+}
+
+// showForecast opens the 7-day forecast panel. It returns immediately: the
 // forecast is fetched on its own goroutine because the caller is the tray's
 // single menu-dispatch loop, and a blocking 10s HTTP call there would freeze
 // Settings, About and Quit along with it.
@@ -44,22 +107,40 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	// to ten seconds, by which time the pointer may be on another monitor
 	// entirely. GDK is not thread-safe, so even this read goes through the GTK
 	// loop - it costs a fraction of a millisecond.
-	anchor := make(chan gtk.Rect, 1)
-	if err := gtk.Invoke(func() { anchor <- pointerAnchor() }); err != nil {
-		anchor <- gtk.Rect{}
+	type start struct {
+		at       gtk.Rect
+		consumed bool
+	}
+	begin := make(chan start, 1)
+	if err := gtk.Invoke(func() {
+		if closeOpenPanel() {
+			begin <- start{consumed: true}
+			return
+		}
+		begin <- start{at: pointerAnchor()}
+	}); err != nil {
+		begin <- start{}
 	}
 
 	go func() {
+		s := <-begin
+		if s.consumed {
+			return
+		}
 		data, err := weather.FetchDaily(lat, lon)
-		at := <-anchor
 		schedErr := gtk.Invoke(func() {
 			l := i18n.ParseLang(lang)
+			if err != nil {
+				log.Printf("forecast: fetch failed: %v", err)
+			} else if len(data) == 0 {
+				log.Print("forecast: fetch returned no days")
+			}
 			if err != nil || len(data) == 0 {
 				ensureAppIcon()
 				gtk.ShowError(appName, forecastFailed(l), "", closeLabel(l))
 				return
 			}
-			buildForecast(data, units, theme, l, at)
+			buildForecast(data, units, windUnit, theme, l, s.at)
 		})
 		if schedErr != nil {
 			// Nothing will ever draw this. Say so rather than leaving the user
@@ -85,7 +166,7 @@ func pointerAnchor() gtk.Rect {
 	return gtk.Rect{X: x, Y: y, W: area.W, H: area.H}
 }
 
-func buildForecast(data []weather.DailyForecast, units, theme string, l i18n.Lang, at gtk.Rect) {
+func buildForecast(data []weather.DailyForecast, units, windUnit, theme string, l i18n.Lang, at gtk.Rect) {
 	if forecastWindow != 0 {
 		forecastWindow.Present()
 		return
@@ -95,7 +176,10 @@ func buildForecast(data []weather.DailyForecast, units, theme string, l i18n.Lan
 	gtk.LoadCSS(forecastCSS)
 
 	win := gtk.NewPanel(l.ForecastTitle(), forecastWidth, forecastHeight)
-	win.OnDestroy(func() { forecastWindow = 0 })
+	win.OnDestroy(func() {
+		forecastWindow = 0
+		forecastClosedAt = time.Now()
+	})
 	gtk.SetName(uintptr(win), forecastWindowID)
 
 	// The visual has to be chosen before the window is realised, and the
@@ -106,24 +190,142 @@ func buildForecast(data []weather.DailyForecast, units, theme string, l i18n.Lan
 	if win.SetTranslucent() {
 		fill = "translucent"
 	}
-	gtk.AddClass(uintptr(win), paletteFor(win, theme), fill)
+	palette := paletteFor(win, theme)
+	gtk.AddClass(uintptr(win), palette, fill)
 
 	// With no title bar there is no close button, so the panel supplies its own
 	// exits. Escape always works; losing focus is the convenience path.
+	//
+	// Focus loss is armed only after the panel has actually held focus once. An
+	// undecorated window is not guaranteed to be given focus when it is mapped,
+	// and without this the first focus-out - which can arrive before the user
+	// has seen anything - closes the panel again immediately. The symptom is a
+	// panel that flickers and vanishes, intermittently, depending on what held
+	// focus at the moment it opened. The Win32 backend has always armed this.
+	armed := false
 	win.OnEscape(func() { win.Destroy() })
-	win.OnFocusOut(func() { win.Destroy() })
+	win.OnFocusIn(func() { armed = true })
+	win.OnFocusOut(func() {
+		if !armed {
+			return
+		}
+		// Any window taking focus lands here, not just one the user clicked -
+		// a notification or a background window will close the panel too. The
+		// line is here because an unexplained disappearance is otherwise
+		// indistinguishable from a crash.
+		log.Print("forecast: closing, focus lost")
+		win.Destroy()
+	})
 
 	scale := win.ScaleFactor()
 
-	page := gtk.NewVBox(12)
+	page := gtk.NewVBox(pageGapY)
 	gtk.AddClass(page, "page")
 	win.Add(page)
 
-	gtk.PackStart(page, header(data[0], units, l, scale, win), false, false, 0)
-	gtk.PackStart(page, dayStrip(data, units, l, scale), false, false, 0)
+	gtk.PackStart(page, closeRow(win), false, false, 0)
+	gtk.PackStart(page, forecastTable(data, units, windUnit, l, scale, paletteForeground(palette)), false, false, 0)
 
 	placePanel(win, page, at)
 	forecastWindow = win
+}
+
+// closeRow is the panel's title-bar substitute: nothing but the × button,
+// pushed to the trailing edge of the sheet.
+//
+// The button is packed expanding and filling with its own halign set, rather
+// than packed non-expanding after a spacer label. A spacer would be one more
+// label for the desktop theme to state a colour and a padding on, and there is
+// no summary text left for it to hide behind.
+func closeRow(win gtk.Window) uintptr {
+	row := gtk.NewHBox(0)
+	btn := gtk.NewButton(closeGlyph, func() { win.Destroy() })
+	gtk.AddClass(btn, "close")
+	gtk.SetHAlign(btn, gtk.AlignEnd)
+	gtk.PackStart(row, btn, true, true, 0)
+	return row
+}
+
+// forecastTable builds the table: captions, a rule, then one row per day with a
+// hairline between neighbours.
+//
+// The grid is deliberately NOT column-homogeneous - forcing the columns equal
+// makes every one of them as wide as the widest caption ("Температура") and puts
+// a large floor under the panel width. Every cell is a gtk.NewCell, which does
+// not wrap: a wrapping label reports a near-zero minimum width, and its column
+// then collapses to nothing the moment the panel is narrower than its content.
+func forecastTable(data []weather.DailyForecast, units, windUnit string, l i18n.Lang, scale int, fg color.NRGBA) uintptr {
+	grid := gtk.NewGrid(rowGapY, colGapX)
+	cols := len(colAlign)
+
+	for i, caption := range l.ForecastHeaders() {
+		if i >= cols {
+			break
+		}
+		cell := gtk.NewCell(caption, colAlign[i])
+		gtk.AddClass(cell, "thead")
+		grid.Attach(cell, i, 0, 1, 1)
+	}
+
+	rule := gtk.NewHSeparator()
+	gtk.AddClass(rule, "rule")
+	grid.Attach(rule, 0, 1, cols, 1)
+
+	row := 2
+	for i, d := range data {
+		if i > 0 {
+			sep := gtk.NewHSeparator()
+			gtk.AddClass(sep, "rowsep")
+			grid.Attach(sep, 0, row, cols, 1)
+			row++
+		}
+
+		// The ISO date exactly as Open-Meteo returned it. No weekday name and no
+		// localised month: the column is a date, and a sortable one reads the
+		// same in both languages.
+		grid.Attach(dataCell(d.Date, 0), 0, row, 1, 1)
+
+		// A missing glyph leaves the slot empty rather than substituting a
+		// symbol that means something else.
+		if sym := symbolWidget(d.WeatherCode, symbolPt, scale, fg); sym != 0 {
+			gtk.SetHAlign(sym, gtk.AlignCenter)
+			gtk.SetVAlign(sym, gtk.AlignCenter)
+			grid.Attach(sym, 1, row, 1, 1)
+		}
+
+		grid.Attach(dataCell(tempRange(d, units, l), 2), 2, row, 1, 1)
+		grid.Attach(dataCell(windSpeed(d, windUnit, l), 3), 3, row, 1, 1)
+		grid.Attach(dataCell(precip(d, l), 4), 4, row, 1, 1)
+
+		row++
+	}
+	return uintptr(grid)
+}
+
+func dataCell(text string, col int) uintptr {
+	cell := gtk.NewCell(text, colAlign[col])
+	gtk.AddClass(cell, "cell")
+	return cell
+}
+
+// symbolWidget rasterises the Weather Icons glyph for a condition code into a
+// GtkImage.
+//
+// The symbol is monochrome and tinted with the palette's foreground on purpose:
+// it was picked over the colour artwork, and a glyph drawn in the same ink as
+// the numbers beside it belongs to the table rather than sitting on top of it.
+// The glyph is rasterised at scale times the layout size and the GtkImage is
+// told the scale, so a HiDPI screen draws real pixels instead of an upscale.
+func symbolWidget(code, pt, scale int, col color.NRGBA) uintptr {
+	if scale < 1 {
+		scale = 1
+	}
+	img := fonts.Glyph(fonts.RuneForCode(code), pt*scale, col)
+	if img == nil {
+		return 0
+	}
+	b := img.Bounds()
+	return gtk.NewImageRGBAScaled(img.Pix, b.Dx(), b.Dy(), img.Stride, scale)
 }
 
 // placePanel shows the panel at the work-area corner nearest the click.
@@ -165,7 +367,7 @@ func corner(px, py, w, h int, area gtk.Rect) (int, int) {
 	return x, y
 }
 
-// paletteFor picks the card palette. For an explicit setting it honours the
+// paletteFor picks the panel palette. For an explicit setting it honours the
 // user; for "auto" it asks the desktop theme which way round it draws text - a
 // light foreground means a dark theme. That is more reliable than the GTK
 // prefer-dark flag, which stays false under themes that are simply dark, such
@@ -183,107 +385,25 @@ func paletteFor(win gtk.Window, theme string) string {
 	return "light"
 }
 
+// paletteForeground is the ink the palette draws cell text in, and therefore the
+// colour a rasterised symbol has to be tinted with to look like part of the
+// table.
+//
+// The value is taken from the stylesheet rather than from win.Foreground(),
+// which is what the DESKTOP theme draws text in. Those two disagree whenever the
+// user forces a palette the desktop does not share - a dark panel on a light
+// theme would otherwise get a near-black symbol on a near-black row. Both
+// literals below are the `label { color: ... }` declarations in style_linux.go
+// and the text members of the Win32 palettes.
+func paletteForeground(palette string) color.NRGBA {
+	if palette == "dark" {
+		return color.NRGBA{R: 0xf2, G: 0xf4, B: 0xf7, A: 0xff} // .dark label
+	}
+	return color.NRGBA{R: 0x14, G: 0x16, B: 0x1a, A: 0xff} // .light label
+}
+
 func luminance(c color.NRGBA) float64 {
 	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
-}
-
-// header is the summary card: today's date, its high and low in large type
-// beside the weather icon, the condition in words, and the panel's close button.
-func header(today weather.DailyForecast, units string, l i18n.Lang, scale int, win gtk.Window) uintptr {
-	card := gtk.NewVBox(6)
-	gtk.AddClass(card, "card")
-
-	top := gtk.NewHBox(8)
-	date := gtk.NewCell(headerDate(today.Date, l), gtk.AlignStart)
-	gtk.AddClass(date, "muted")
-	gtk.PackStart(top, date, true, true, 0)
-
-	closeBtn := gtk.NewButton("×", func() { win.Destroy() })
-	gtk.AddClass(closeBtn, "close")
-	gtk.SetVAlign(closeBtn, gtk.AlignCenter)
-	gtk.PackStart(top, closeBtn, false, false, 0)
-	gtk.PackStart(card, top, false, false, 0)
-
-	row := gtk.NewHBox(10)
-
-	temps := gtk.NewCell(tempRange(today, units), gtk.AlignStart)
-	gtk.AddClass(temps, "hero")
-	gtk.PackStart(row, temps, false, false, 0)
-
-	if icon := iconWidget(today.WeatherCode, heroIconPt, scale); icon != 0 {
-		gtk.SetVAlign(icon, gtk.AlignCenter)
-		gtk.PackStart(row, icon, false, false, 0)
-	}
-
-	cond := gtk.NewCell(l.Condition(today.WeatherCode), gtk.AlignEnd)
-	gtk.AddClass(cond, "cond")
-	gtk.SetVAlign(cond, gtk.AlignCenter)
-	gtk.PackStart(row, cond, true, true, 0)
-
-	gtk.PackStart(card, row, false, false, 0)
-	return card
-}
-
-// dayStrip is the row of equal-width day cards. Index 0 is today: Open-Meteo's
-// daily series starts at the current date.
-func dayStrip(data []weather.DailyForecast, units string, l i18n.Lang, scale int) uintptr {
-	strip := gtk.NewHBox(8)
-	gtk.SetHomogeneous(strip)
-
-	for i, day := range data {
-		card := gtk.NewVBox(6)
-		gtk.AddClass(card, "day")
-		if i == 0 {
-			gtk.AddClass(card, "today")
-		}
-
-		name := gtk.NewCell(shortDay(day.Date, l), gtk.AlignCenter)
-		gtk.AddClass(name, "muted")
-		gtk.PackStart(card, name, false, false, 0)
-
-		if icon := iconWidget(day.WeatherCode, dayIconPt, scale); icon != 0 {
-			gtk.SetHAlign(icon, gtk.AlignCenter)
-			gtk.PackStart(card, icon, false, false, 0)
-		}
-
-		temps := gtk.NewCell(tempRange(day, units), gtk.AlignCenter)
-		gtk.AddClass(temps, "daytemp")
-		gtk.PackStart(card, temps, false, false, 0)
-
-		gtk.PackStart(strip, card, true, true, 0)
-	}
-	return strip
-}
-
-// iconWidget renders the weather artwork at pt layout points, using the asset
-// that matches the display scale so a HiDPI screen gets real pixels rather than
-// an upscaled blur. It returns 0 when no artwork is available; every caller
-// treats that as "leave the slot empty" rather than substituting a wrong
-// symbol.
-func iconWidget(code, pt, scale int) uintptr {
-	if scale < 1 {
-		scale = 1
-	}
-	img := wicons.Icon(code, wicons.Size(pt*scale))
-	if img == nil && scale > 1 {
-		// No artwork at the doubled size; fall back to 1x rather than nothing.
-		scale = 1
-		img = wicons.Icon(code, wicons.Size(pt))
-	}
-	if img == nil {
-		return 0
-	}
-	b := img.Bounds()
-	return gtk.NewImageRGBAScaled(img.Pix, b.Dx(), b.Dy(), img.Stride, scale)
-}
-
-func tempRange(d weather.DailyForecast, units string) string {
-	hi, lo := d.TempMax, d.TempMin
-	if units == "fahrenheit" {
-		hi = hi*9/5 + 32
-		lo = lo*9/5 + 32
-	}
-	return fmt.Sprintf("%.0f°/%.0f°", hi, lo)
 }
 
 func forecastFailed(l i18n.Lang) string {

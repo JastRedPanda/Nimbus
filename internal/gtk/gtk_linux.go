@@ -648,12 +648,6 @@ func NewVBox(spacing int) uintptr { return boxNew(OrientationVertical, int32(spa
 // NewHBox creates a horizontal GtkBox.
 func NewHBox(spacing int) uintptr { return boxNew(OrientationHorizontal, int32(spacing)) }
 
-// SetHomogeneous makes a box give every child the same size. It is what keeps
-// the seven day cards equal in width without hardcoding one: they stay equal as
-// the window is resized, and GTK still derives the window's minimum width from
-// the widest card's content, so nothing clips.
-func SetHomogeneous(box uintptr) { boxHomogeneous(box, 1) }
-
 // PackStart appends child to a box.
 func PackStart(box, child uintptr, expand, fill bool, padding int) {
 	if child == 0 {
@@ -693,16 +687,6 @@ func NewCell(s string, align int) uintptr {
 	return l
 }
 
-// NewMarkupCell is NewCell for text that carries Pango markup. The caller is
-// responsible for escaping anything dynamic.
-func NewMarkupCell(markup string, align int) uintptr {
-	l := labelNew("")
-	labelMarkup(l, markup)
-	widgetHalign(l, int32(align))
-	widgetHexpand(l, 1)
-	return l
-}
-
 // SetLabel replaces a label's literal text, nothing in it treated as markup.
 // The forecast builds every label once, but a form does not: the readout beside
 // the font-scale slider has to follow the thumb, so its text cannot be baked in
@@ -722,15 +706,6 @@ func ShowAll(widget uintptr) {
 		return
 	}
 	widgetShowAll(widget)
-}
-
-// SetVExpand lets a widget claim vertical slack, which spreads table rows over
-// the window instead of stacking them against the top edge.
-func SetVExpand(widget uintptr) {
-	if widget == 0 {
-		return
-	}
-	widgetVexpand(widget, 1)
 }
 
 // SetHAlign overrides a widget's horizontal alignment. A GtkImage in an
@@ -1019,6 +994,17 @@ func (w Window) OnEscape(fn func()) {
 	})
 }
 
+// OnFocusIn runs fn when the window gains focus. A panel uses it to decide that
+// a later focus LOSS is genuine: an undecorated window is not guaranteed to be
+// given focus when it is mapped, so a focus-out can arrive before the window was
+// ever focused at all.
+func (w Window) OnFocusIn(fn func()) {
+	ConnectEvent(uintptr(w), "focus-in-event", func(uintptr) bool {
+		fn()
+		return false
+	})
+}
+
 // OnFocusOut runs fn when the window loses focus, which is how a panel gets
 // dismissed by clicking elsewhere. It fires for any window that takes focus,
 // including another of this application's own, so it is a convenience on top of
@@ -1115,7 +1101,7 @@ func SetSensitive(widget uintptr, on bool) {
 	widgetSensitive(widget, b2i(on))
 }
 
-// SetHExpand lets a widget claim horizontal slack, the mirror of SetVExpand. An
+// SetHExpand lets a widget claim horizontal slack in its container. An
 // entry has a modest natural width, so without this it sits at that width with
 // the rest of its grid column empty beside it.
 func SetHExpand(widget uintptr) {

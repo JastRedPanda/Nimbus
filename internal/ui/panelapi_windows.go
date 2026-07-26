@@ -27,14 +27,29 @@ import (
 
 var (
 	panelUser32 = syscall.NewLazyDLL("user32.dll")
+	panelGdi32  = syscall.NewLazyDLL("gdi32.dll")
 
 	procUpdateLayeredWindow = panelUser32.NewProc("UpdateLayeredWindow")
 	procMonitorFromRect     = panelUser32.NewProc("MonitorFromRect")
+	procGetTextFace         = panelGdi32.NewProc("GetTextFaceW")
 )
 
-// dwFlags for UpdateLayeredWindow, from winuser.h. ULW_ALPHA is the only one
-// that means "use the per-pixel alpha in the source bitmap".
-const ulwAlpha = 0x00000002
+// dwFlags for UpdateLayeredWindow, from winuser.h.
+//
+// ULW_ALPHA is the only one that means "use the per-pixel alpha in the source
+// bitmap"; ULW_OPAQUE, "draw an opaque layered window", puts the same bitmap up
+// with the alpha channel ignored, and is what the panel asks for on a display
+// too shallow to composite alpha - see perPixelAlpha. ULW_COLORKEY, the third,
+// is not wanted here: it makes one exact RGB value transparent, which cannot
+// express an antialiased edge.
+//
+// Note that ULW_ALPHA degrades to ULW_OPAQUE by itself on such a display,
+// silently and successfully, which is precisely why the panel decides which
+// palette to draw BEFORE it calls this rather than reading the return value.
+const (
+	ulwAlpha  = 0x00000002
+	ulwOpaque = 0x00000004
+)
 
 // BLENDFUNCTION.BlendOp. lxn/win declares AC_SRC_ALPHA but not AC_SRC_OVER,
 // and about_windows.go has its own copy under a different name; this one is
@@ -100,4 +115,29 @@ func monitorFromRect(rc *win.RECT, flags uint32) win.HMONITOR {
 		uintptr(unsafe.Pointer(rc)), uintptr(flags))
 	runtime.KeepAlive(rc)
 	return win.HMONITOR(ret)
+}
+
+// getTextFace wraps int GetTextFaceW(HDC hdc, int c, LPWSTR lpName).
+//
+// It answers the typeface name of the font currently SELECTED INTO hdc - the
+// realised font, not the LOGFONT that was asked for - which is the only way to
+// find out that the font mapper substituted something for a face name it could
+// not find. c is a count of WCHARs including room for the terminator, and the
+// return value is the number of characters copied, or 0 on failure.
+//
+// The buffer is one WCHAR longer than LF_FACESIZE so that the trailing zero
+// make() supplies terminates the string even in the pathological case of a name
+// that fills the buffer exactly.
+func getTextFace(dc win.HDC) (string, bool) {
+	if err := procGetTextFace.Find(); err != nil {
+		return "", false
+	}
+	buf := make([]uint16, win.LF_FACESIZE+1)
+	ret, _, _ := syscall.SyscallN(procGetTextFace.Addr(),
+		uintptr(dc), uintptr(win.LF_FACESIZE), uintptr(unsafe.Pointer(&buf[0])))
+	runtime.KeepAlive(buf)
+	if ret == 0 {
+		return "", false
+	}
+	return syscall.UTF16ToString(buf), true
 }

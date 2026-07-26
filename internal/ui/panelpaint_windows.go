@@ -23,9 +23,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/JastRedPanda/Nimbus/internal/wicons"
 	"github.com/lxn/win"
-	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/vector"
 )
 
@@ -137,11 +135,9 @@ func (s *surface) blitFrom(src *image.RGBA) {
 // the radius, which at r=14 is a visible 0.85px of extra squareness.
 const kappa = 0.5522847498307936
 
-// roundRectPath appends a rounded rectangle to z. reverse emits the same
-// outline with the opposite winding, which the rasteriser's non-zero fill rule
-// turns into a hole - that is how roundRing gets an antialiased 1px annulus
-// instead of two stacked fills.
-func roundRectPath(z *vector.Rasterizer, x, y, w, h, r float32, reverse bool) {
+// roundRectPath appends a rounded rectangle to z, clockwise from the start of
+// the top edge.
+func roundRectPath(z *vector.Rasterizer, x, y, w, h, r float32) {
 	if r < 0 {
 		r = 0
 	}
@@ -153,27 +149,15 @@ func roundRectPath(z *vector.Rasterizer, x, y, w, h, r float32, reverse bool) {
 	}
 	c := r * kappa
 
-	if !reverse {
-		z.MoveTo(x+r, y)
-		z.LineTo(x+w-r, y)
-		z.CubeTo(x+w-r+c, y, x+w, y+r-c, x+w, y+r)
-		z.LineTo(x+w, y+h-r)
-		z.CubeTo(x+w, y+h-r+c, x+w-r+c, y+h, x+w-r, y+h)
-		z.LineTo(x+r, y+h)
-		z.CubeTo(x+r-c, y+h, x, y+h-r+c, x, y+h-r)
-		z.LineTo(x, y+r)
-		z.CubeTo(x, y+r-c, x+r-c, y, x+r, y)
-	} else {
-		z.MoveTo(x+r, y)
-		z.CubeTo(x+r-c, y, x, y+r-c, x, y+r)
-		z.LineTo(x, y+h-r)
-		z.CubeTo(x, y+h-r+c, x+r-c, y+h, x+r, y+h)
-		z.LineTo(x+w-r, y+h)
-		z.CubeTo(x+w-r+c, y+h, x+w, y+h-r+c, x+w, y+h-r)
-		z.LineTo(x+w, y+r)
-		z.CubeTo(x+w, y+r-c, x+w-r+c, y, x+w-r, y)
-		z.LineTo(x+r, y)
-	}
+	z.MoveTo(x+r, y)
+	z.LineTo(x+w-r, y)
+	z.CubeTo(x+w-r+c, y, x+w, y+r-c, x+w, y+r)
+	z.LineTo(x+w, y+h-r)
+	z.CubeTo(x+w, y+h-r+c, x+w-r+c, y+h, x+w-r, y+h)
+	z.LineTo(x+r, y+h)
+	z.CubeTo(x+r-c, y+h, x, y+h-r+c, x, y+h-r)
+	z.LineTo(x, y+r)
+	z.CubeTo(x, y+r-c, x+r-c, y, x+r, y)
 	z.ClosePath()
 }
 
@@ -192,32 +176,48 @@ func roundRect(dst *image.RGBA, x, y, w, h int32, r float32, c color.RGBA) {
 	}
 	z := vector.NewRasterizer(int(w), int(h))
 	z.DrawOp = draw.Over
-	roundRectPath(z, 0, 0, float32(w), float32(h), r, false)
+	roundRectPath(z, 0, 0, float32(w), float32(h), r)
 	z.Draw(dst, image.Rect(int(x), int(y), int(x+w), int(y+h)), image.NewUniform(c), image.Point{})
 }
 
-// roundRing strokes a 1px (times thickness) rounded outline.
+// paintRect fills an axis-aligned rectangle: the table's rule and its row
+// separators, and the page background of the opaque fallback.
 //
-// It is a real annulus rather than "fill the outer shape, then fill the inner
-// one on top", because the card fill is translucent: painting an 88%-alpha fill
-// over an opaque border tints the whole interior with the border colour and
-// turns the card opaque. Drawing the ring last, on top of the finished fill, is
-// the only order that leaves the interior exactly the colour and opacity the
-// design asks for.
-func roundRing(dst *image.RGBA, x, y, w, h int32, r, thickness float32, c color.RGBA) {
-	if w <= 0 || h <= 0 || thickness <= 0 || c.A == 0 || !fitsIn(dst, x, y, w, h) {
+// It is a straight premultiplied source-over rather than a call to roundRect
+// with a zero radius, because the shapes it draws are one pixel tall and
+// exactly on the pixel grid. There is nothing for a rasteriser to antialias
+// there, a degenerate Bezier at every corner is a needless question to ask of
+// one, and this loop cannot fail to be exact.
+//
+// Unlike roundRect it CLIPS rather than declining to draw: a rule is the full
+// width of the card and a rounding error of one pixel at the far edge would
+// otherwise silently lose the whole line.
+func paintRect(dst *image.RGBA, x, y, w, h int32, c color.RGBA) {
+	if w <= 0 || h <= 0 || c.A == 0 {
 		return
 	}
-	fw, fh := float32(w), float32(h)
-	if thickness*2 >= fw || thickness*2 >= fh {
-		roundRect(dst, x, y, w, h, r, c)
+	b := dst.Bounds()
+	x0, y0 := max(int(x), b.Min.X), max(int(y), b.Min.Y)
+	x1, y1 := min(int(x+w), b.Max.X), min(int(y+h), b.Max.Y)
+	if x0 >= x1 || y0 >= y1 {
 		return
 	}
-	z := vector.NewRasterizer(int(w), int(h))
-	z.DrawOp = draw.Over
-	roundRectPath(z, 0, 0, fw, fh, r, false)
-	roundRectPath(z, thickness, thickness, fw-2*thickness, fh-2*thickness, r-thickness, true)
-	z.Draw(dst, image.Rect(int(x), int(y), int(x+w), int(y+h)), image.NewUniform(c), image.Point{})
+	// Premultiplied source-over: out = src + dst*(1-srcA). It cannot overflow,
+	// because a premultiplied component is never larger than its own alpha:
+	// src.C + dst.C*(255-src.A)/255 <= src.A + (255 - src.A) = 255. An opaque
+	// colour falls out of the same expression with inv = 0, so it needs no case
+	// of its own.
+	inv := 255 - uint32(c.A)
+	for py := y0; py < y1; py++ {
+		row := dst.PixOffset(x0, py)
+		for px := x0; px < x1; px++ {
+			dst.Pix[row+0] = uint8(uint32(c.R) + uint32(dst.Pix[row+0])*inv/255)
+			dst.Pix[row+1] = uint8(uint32(c.G) + uint32(dst.Pix[row+1])*inv/255)
+			dst.Pix[row+2] = uint8(uint32(c.B) + uint32(dst.Pix[row+2])*inv/255)
+			dst.Pix[row+3] = uint8(uint32(c.A) + uint32(dst.Pix[row+3])*inv/255)
+			row += 4
+		}
+	}
 }
 
 // fitsIn reports whether a shape lies wholly inside dst.
@@ -246,67 +246,6 @@ func premul(r, g, b, a uint8) color.RGBA {
 }
 
 // ---------------------------------------------------------------------------
-// Colour artwork
-// ---------------------------------------------------------------------------
-
-// panelIcon renders the Meteocons artwork for a WMO code at exactly px pixels,
-// premultiplied and ready to composite. It returns nil when there is no
-// artwork, and every caller treats that as "leave the slot empty" rather than
-// substituting a wrong symbol - the same contract iconWidget has on the GTK
-// side.
-//
-// internal/wicons ships three rasterised sizes and returns nil for anything
-// else, on the grounds that a scaled bitmap is exactly the softened artwork it
-// exists to avoid. At 96 DPI the panel asks for 64 and 32 and gets them
-// untouched. A scaled desktop asks for sizes in between, and then the least-bad
-// answer is to take the next size UP and shrink it: downsampling a 128px raster
-// to 96 keeps the thin features, upsampling a 64px one to 96 does not.
-//
-// BiLinear rather than CatmullRom on purpose: it is a kernel scaler, so it
-// area-averages properly when shrinking, and unlike CatmullRom it has no
-// negative lobes, so it cannot overshoot and produce a premultiplied component
-// larger than its own alpha.
-func panelIcon(code int, px int32) *image.RGBA {
-	if px <= 0 {
-		return nil
-	}
-	var size wicons.Size
-	switch {
-	case px <= int32(wicons.Size32):
-		size = wicons.Size32
-	case px <= int32(wicons.Size64):
-		size = wicons.Size64
-	default:
-		size = wicons.Size128
-	}
-	src := wicons.Icon(code, size)
-	if src == nil {
-		return nil
-	}
-	b := src.Bounds()
-	dst := image.NewRGBA(image.Rect(0, 0, int(px), int(px)))
-	if b.Dx() == int(px) && b.Dy() == int(px) {
-		// wicons returns STRAIGHT alpha; image.RGBA is premultiplied.
-		// draw.Draw does that conversion on the way through, because
-		// color.NRGBA.RGBA() premultiplies. Hand-rolling it is how every
-		// antialiased edge acquires a dark halo.
-		draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
-		return dst
-	}
-	xdraw.BiLinear.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
-	return dst
-}
-
-// drawImage composites premultiplied artwork over the panel buffer.
-func drawImage(dst *image.RGBA, src *image.RGBA, x, y int32) {
-	if src == nil {
-		return
-	}
-	b := src.Bounds()
-	draw.Draw(dst, image.Rect(int(x), int(y), int(x)+b.Dx(), int(y)+b.Dy()), src, b.Min, draw.Over)
-}
-
-// ---------------------------------------------------------------------------
 // Text
 // ---------------------------------------------------------------------------
 
@@ -318,23 +257,42 @@ type textRun struct {
 	font  win.HFONT
 }
 
-// panelFont builds a font at a point size scaled for the window's DPI.
-//
-// LfHeight is NEGATIVE: negative is the character height, positive is the cell
-// height including internal leading, and mixing them up makes every font come
-// out about 20% too small.
-//
-// LfQuality is ANTIALIASED_QUALITY rather than the CLEARTYPE_QUALITY the rest
-// of this package asks for. Subpixel antialiasing cannot be composited against
-// an unknown background, so ClearType is unavailable on a layered window under
-// every technique; asking for grayscale explicitly is what keeps the coverage
-// arithmetic below exact.
+// panelFont builds a font at a POINT size scaled for the window's DPI, which is
+// how every type size in the panel except the weather symbol is stated - they
+// come from `font-size: 11pt` and `font-size: 13pt` in style_linux.go. There are
+// 72 points to the inch and dpi pixels, hence the conversion.
 //
 // The face comes from the user's own shell font, not a hardcoded "Segoe UI", so
 // a locale whose script that face cannot draw still gets readable text.
 func panelFont(pt, weight, dpi int32) win.HFONT {
+	return panelFontPx(win.MulDiv(pt, dpi, 72), weight, shellFontFace())
+}
+
+// panelFontPx builds a font from an em height already in DEVICE PIXELS, which is
+// how the one size stated in pixels rather than points is asked for: the weather
+// symbol, whose counterpart on the GTK side is a rasterised tile that many
+// pixels on a side.
+//
+// LfHeight is NEGATIVE: negative is the character height - the em - and positive
+// is the cell height including internal leading. Mixing them up makes every font
+// come out about 20% too small, and for the weather typeface, whose internal
+// leading is 45% of its em, very much more than that.
+//
+// LfQuality is ANTIALIASED_QUALITY rather than the CLEARTYPE_QUALITY the rest of
+// this package asks for. Subpixel antialiasing cannot be composited against an
+// unknown background, so ClearType is unavailable on a layered window under every
+// technique; asking for grayscale explicitly is what keeps the coverage
+// arithmetic in compositeMask exact.
+//
+// face is passed rather than assumed because this is also how the embedded
+// weather typeface is requested - internal/fonts has registered it with GDI
+// privately, so it can be asked for by family name like any installed font.
+// CreateFontIndirect does NOT fail on a face name GDI cannot find: the font
+// mapper substitutes the closest match it can, so a handle for a named face has
+// to be checked with faceOf before it is trusted to draw private-use codepoints.
+func panelFontPx(px, weight int32, face string) win.HFONT {
 	lf := win.LOGFONT{
-		LfHeight:         -win.MulDiv(pt, dpi, 72),
+		LfHeight:         -px,
 		LfWeight:         weight,
 		LfCharSet:        win.DEFAULT_CHARSET,
 		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
@@ -342,8 +300,30 @@ func panelFont(pt, weight, dpi int32) win.HFONT {
 		LfQuality:        win.ANTIALIASED_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
-	setFaceName(&lf, shellFontFace())
+	setFaceName(&lf, face)
 	return win.CreateFontIndirect(&lf)
+}
+
+// faceOf reports the typeface GDI actually realised for f, which is not
+// necessarily the one that was asked for. A false second return means the
+// question could not be put - no memory DC, or no GetTextFace export - and the
+// caller should not read a substitution into the silence.
+func faceOf(f win.HFONT) (string, bool) {
+	if f == 0 {
+		return "", false
+	}
+	m := newMeasureDC()
+	defer m.dispose()
+	if m == nil {
+		return "", false
+	}
+	// Deferred second, so it runs FIRST: the font is deselected before the DC
+	// goes, and therefore before the caller can be told to delete it.
+	prev := win.SelectObject(m.dc, win.HGDIOBJ(f))
+	defer win.SelectObject(m.dc, prev)
+
+	name, ok := getTextFace(m.dc)
+	return name, ok
 }
 
 // measureDC is a memory DC used only to ask GDI about font metrics. Text

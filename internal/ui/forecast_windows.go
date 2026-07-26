@@ -4,20 +4,27 @@ package ui
 
 // The 7-day forecast panel, Win32 edition.
 //
-// It is the same design as the GTK panel in forecast_linux.go and style_linux.go:
-// a borderless translucent sheet of rounded cards that opens at the work-area
-// corner nearest the pointer and closes on Escape, on losing focus, or on its
-// own close button. Everything the two backends share - the 620pt width, the
-// 14pt page padding, the card radii, the type sizes, the palettes, the corner
-// arithmetic - is carried across value for value, because the point of this
-// file is that the two platforms look like one product.
+// The CONTENT is a plain five-column table: one header row, a rule, then seven
+// data rows separated by hairlines. No summary header and no cards - that layout
+// was tried and reverted. The CHROME around it is the panel work and stays:
+// undecorated, off the taskbar, above other windows, translucent only where the
+// display can actually composite it, placed at the work-area corner nearest the
+// click, and dismissed by Escape, by focus loss, or by its own × button.
+//
+// Every metric is shared with the GTK backend value for value: the constants
+// below carry the same names and numbers as the ones in forecast_linux.go and
+// the stylesheet in style_linux.go, and the column widths are distributed the
+// way a GtkGrid of expanding cells distributes them. The point of the two files
+// is that the two platforms look like one product.
 //
 // How it is built, in one line: the whole panel is composed in pure Go into a
 // premultiplied image.RGBA, GDI is used for exactly one thing (turning strings
 // into glyph coverage, in a scratch bitmap), the result is copied into a
 // top-down 32bpp DIB section, and that is handed to UpdateLayeredWindow. GDI
 // never touches the panel surface, so GDI can never destroy its alpha. See
-// panelpaint_windows.go for why that rule exists.
+// panelpaint_windows.go for why that rule exists, and do not reach for DrawText
+// on the surface itself while changing this layout: it writes R, G and B and
+// leaves A at zero, which is a pixel-perfect panel with invisible text.
 //
 // Window shape:   WS_POPUP. No WS_CAPTION, no WS_BORDER, no WS_THICKFRAME.
 // Extended style: WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST.
@@ -29,64 +36,88 @@ package ui
 //                 repaints it itself.
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"log"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
+	"github.com/JastRedPanda/Nimbus/internal/fonts"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/lxn/win"
 )
 
-// Layout, in the same units the GTK stylesheet uses: logical pixels at 96 DPI,
-// scaled to the window's real DPI at layout time. Every value here has a
-// counterpart in style_linux.go or forecast_linux.go and is listed beside it.
+// Layout, in the same units the GTK side uses: logical pixels at 96 DPI, scaled
+// to the window's real DPI at layout time. The counterpart of each value in
+// forecast_linux.go or style_linux.go is named beside it.
 const (
 	panelWidthPt = 620 // forecastWidth
 	panelEdgeGap = 12  // panelMargin: clearance from the work-area edges
-	pagePad      = 14  // .page padding
-	pageGapY     = 12  // page VBox spacing, header card to day strip
+	pagePad      = 14  // .page padding, sides and bottom
+	// The top is tighter than the rest so the close affordance can be a
+	// comfortable target without making the panel taller. The glyph occupies
+	// the space the padding gives up, so the panel does not read as cramped.
+	pagePadTop    = 6
+	sheetRadiusPt = 14 // #nimbus-forecast.translucent border-radius
 
-	cardRadiusPt = 14 // .card border-radius
-	cardPadX     = 18 // .card padding, horizontal
-	cardPadY     = 16 // .card padding, vertical
-	cardGapY     = 6  // header card VBox spacing
-	topRowGap    = 8  // header top HBox spacing, date to close button
-	heroRowGap   = 10 // header hero HBox spacing
+	pageGapY = 2  // page VBox spacing: the close row to the table
+	rowGapY  = 6  // grid row spacing
+	colGapX  = 18 // grid column spacing
 
-	dayRadiusPt = 12 // .day border-radius
-	dayPadX     = 6  // .day padding, horizontal
-	dayPadY     = 12 // .day padding, vertical
-	dayGapY     = 6  // day card VBox spacing
-	stripGap    = 8  // day strip HBox spacing
-	dayBorderPt = 1  // .day border-width
-
-	closePadX     = 8 // .close padding
-	closePadY     = 2
+	closePadX     = 9 // .close padding
+	closePadY     = 0
 	closeRadiusPt = 8 // .close border-radius
 
-	// Icon sizes in layout points. Both double cleanly into an embedded asset
-	// on a HiDPI screen (64 -> 128, 32 -> 64), which is why the header icon is
-	// not larger: internal/wicons has no 256px artwork.
-	heroIconPt = 64
-	dayIconPt  = 32
+	theadPt = 11 // .thead font-size, weight 600
+	cellPt  = 11 // .cell font-size
+	closePt = 15 // .close font-size
 
-	// Type sizes, in points, from style_linux.go.
-	mutedPt   = 11 // .muted
-	condPt    = 13 // .cond
-	heroPt    = 34 // .hero
-	dayTempPt = 11 // .daytemp
-	closePt   = 13 // .close
+	// symbolPt is the size of the weather symbol in layout PIXELS, not in
+	// typographic points - it is the value fonts.Glyph is handed on the GTK
+	// side, where it sizes the rasterised ink. Here it is the font's em height,
+	// because these glyphs draw at very close to one em (0.75 to 1.11 in this
+	// typeface, 1.02 on average), so an em of symbolPt puts the ink at about
+	// symbolPt and the two backends agree.
+	symbolPt = 20
+
+	// rulePt is the thickness of the header rule and of the hairlines between
+	// data rows: `separator { min-height: 1px }`.
+	rulePt = 1
+
+	// numCols is the width of i18n.ForecastHeaders(). It is a constant rather
+	// than len(headers) because the geometry is an array: a locale that
+	// returned a different number of captions would otherwise index past it.
+	numCols = 5
+	// colCond is the column drawn in the symbol face instead of the text face.
+	colCond = 1
 )
 
+// colAlign is the horizontal alignment of each table column, applied to both the
+// header caption and the cells under it so a column reads as one thing. Day
+// reads as a label and sits left; the symbol is centred in its column; the three
+// numeric columns are right aligned so their digits line up, which is the whole
+// reason a table beats a row of cards.
+var colAlign = [numCols]uint32{
+	win.DT_LEFT,   // Day
+	win.DT_CENTER, // Condition
+	win.DT_RIGHT,  // Temp
+	win.DT_RIGHT,  // Wind
+	win.DT_RIGHT,  // Precip
+}
+
+// weatherIconsFace is the family name inside internal/fonts/weathericons.ttf
+// (name ID 1), which is what CreateFontIndirect matches lfFaceName against.
+// internal/fonts registers the file with GDI privately; it does not name the
+// family, so the name is repeated here and verified at runtime - see makeFonts.
+const weatherIconsFace = "Weather Icons"
+
 // closeGlyph is the panel's own close affordance. With no title bar there is no
-// system close button, so the header card supplies one, exactly as the GTK
-// panel does.
+// system close button, so the panel supplies one, exactly as the GTK panel does.
 const closeGlyph = "×" // MULTIPLICATION SIGN
 
 const panelClassName = "NimbusForecastPanel"
@@ -95,42 +126,58 @@ const panelClassName = "NimbusForecastPanel"
 // Palette
 // ---------------------------------------------------------------------------
 
-// panelPalette is the translucent half of the GTK stylesheet. Only the
-// translucent variants are ported: a layered window always composites against
-// the desktop, so there is no equivalent of the "no compositor" case the GTK
-// sheet keeps a solid palette for.
+// panelPalette is one of the four palettes style_linux.go keeps: dark or light,
+// translucent or solid. Which pair is used is decided at runtime, not assumed -
+// see panel.show.
+//
+// There is no separate card colour because there is no card. The window IS the
+// sheet: one background, one radius, and pagePad of padding inside it, which is
+// exactly what `#nimbus-forecast.translucent` plus `.page` states.
 type panelPalette struct {
-	card      color.RGBA // .card / .day background, premultiplied
-	today     color.RGBA // .day.today background
-	border    color.RGBA // .day.today border-color
+	sheet color.RGBA // #nimbus-forecast background-color, premultiplied
+	// radiusPt is the sheet's corner radius in layout points. Zero in the solid
+	// palettes: the GTK sheet asks for a radius only on its translucent
+	// classes, because a rounded corner over a background that cannot be
+	// composited is a notch of whatever is behind it.
+	radiusPt  int
+	rule      color.RGBA // .rule background, under the captions
+	sep       color.RGBA // separator background, between data rows
 	hoverFill color.RGBA // .close:hover background
-	text      [3]uint8   // label color
-	muted     [3]uint8   // .muted color, also .close
-	cond      [3]uint8   // .cond color
+	text      [3]uint8   // label color, the cells and the symbols
+	thead     [3]uint8   // .thead color, also .close
 }
 
-func darkPanelPalette() panelPalette {
-	return panelPalette{
-		card:      premul(28, 31, 38, 209),    // rgba(28,31,38,0.82)
-		today:     premul(42, 47, 57, 224),    // rgba(42,47,57,0.88)
-		border:    premul(111, 123, 141, 255), // #6f7b8d
-		hoverFill: premul(255, 255, 255, 26),  // rgba(255,255,255,0.10)
-		text:      [3]uint8{0xf2, 0xf4, 0xf7},
-		muted:     [3]uint8{0x9a, 0xa3, 0xb0},
-		cond:      [3]uint8{0xd6, 0xdb, 0xe3},
+// panelPaletteFor builds a palette. translucent selects the halves of the GTK
+// sheet whose colours carry alpha.
+func panelPaletteFor(dark, translucent bool) panelPalette {
+	if dark {
+		p := panelPalette{
+			sheet:     premul(28, 31, 38, 255),   // #1c1f26
+			rule:      premul(255, 255, 255, 71), // rgba(255,255,255,0.28)
+			sep:       premul(255, 255, 255, 26), // rgba(255,255,255,0.10)
+			hoverFill: premul(255, 255, 255, 26), // rgba(255,255,255,0.10)
+			text:      [3]uint8{0xf2, 0xf4, 0xf7},
+			thead:     [3]uint8{0x9a, 0xa3, 0xb0},
+		}
+		if translucent {
+			p.sheet = premul(28, 31, 38, 245) // rgba(28,31,38,0.96)
+			p.radiusPt = sheetRadiusPt
+		}
+		return p
 	}
-}
-
-func lightPanelPalette() panelPalette {
-	return panelPalette{
-		card:      premul(255, 255, 255, 224), // rgba(255,255,255,0.88)
-		today:     premul(226, 233, 242, 240), // rgba(226,233,242,0.94)
-		border:    premul(154, 166, 182, 255), // #9aa6b6
+	p := panelPalette{
+		sheet:     premul(255, 255, 255, 255), // #ffffff
+		rule:      premul(0, 0, 0, 61),        // rgba(0,0,0,0.24)
+		sep:       premul(0, 0, 0, 26),        // rgba(0,0,0,0.10)
 		hoverFill: premul(0, 0, 0, 20),        // rgba(0,0,0,0.08)
 		text:      [3]uint8{0x14, 0x16, 0x1a},
-		muted:     [3]uint8{0x5b, 0x64, 0x72},
-		cond:      [3]uint8{0x38, 0x41, 0x4f},
+		thead:     [3]uint8{0x5b, 0x64, 0x72},
 	}
+	if translucent {
+		p.sheet = premul(255, 255, 255, 250) // rgba(255,255,255,0.98)
+		p.radiusPt = sheetRadiusPt
+	}
+	return p
 }
 
 // ---------------------------------------------------------------------------
@@ -141,8 +188,7 @@ func lightPanelPalette() panelPalette {
 //
 // The fetch runs on its own goroutine because the caller is the tray's single
 // menu-dispatch loop, and a blocking ten-second HTTP call there would freeze
-// Settings, About and Quit along with it. That is the same reason
-// forecast_linux.go gives; the Win32 side simply never had the fix.
+// Settings, About and Quit along with it.
 func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	// The pointer is sampled NOW, while the user's click is still fresh, rather
 	// than when the window is finally built: the fetch in between can take up
@@ -154,9 +200,9 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	go func() {
 		l := i18n.ParseLang(lang)
 
-		// Cheap early out, so a second click while the panel is open does not
-		// spend ten seconds on a fetch whose result is going to be discarded.
-		if presentPanel() {
+		// Before the fetch, so a click that only closes the panel does not spend
+		// ten seconds on a result it will discard.
+		if closeOpenPanel() {
 			return
 		}
 
@@ -194,52 +240,51 @@ func forecastFailed(l i18n.Lang) string {
 	return "Failed to load forecast."
 }
 
-// tempRange is the high/low pair the header and every day card show. Identical
-// to the GTK backend's, including the unit conversion: Open-Meteo is asked for
-// Celsius and Fahrenheit is derived here.
-func tempRange(d weather.DailyForecast, units string) string {
-	hi, lo := d.TempMax, d.TempMin
-	if units == "fahrenheit" {
-		hi = hi*9/5 + 32
-		lo = lo*9/5 + 32
-	}
-	return fmt.Sprintf("%.0f°/%.0f°", hi, lo)
-}
-
 // ---------------------------------------------------------------------------
 // The panel
 // ---------------------------------------------------------------------------
 
-type dayItem struct {
-	name string
-	temp string
-	code int
-	icon *image.RGBA
+// tableRow is one day, already formatted. cell[colCond] holds the Weather Icons
+// codepoint rather than a word, and is the one cell drawn in the symbol face.
+type tableRow struct {
+	cell [numCols]string
 }
 
-type dayGeom struct {
-	card win.RECT
-	name win.RECT
-	icon win.POINT
-	temp win.RECT
+type rowGeom struct {
+	cell [numCols]win.RECT
+	// sep is the hairline BELOW this row, and is the zero RECT for the last one:
+	// the hairlines go between the data rows, not after them.
+	sep win.RECT
 }
 
 type panelGeom struct {
-	header   win.RECT
-	date     win.RECT
+	sheet    win.RECT
 	closeBox win.RECT
-	hero     win.RECT
-	heroIcon win.POINT
-	cond     win.RECT
-	days     []dayGeom
+	head     [numCols]win.RECT
+	rule     win.RECT
+	rows     []rowGeom
 }
 
 type panelFonts struct {
-	muted   win.HFONT
-	cond    win.HFONT
-	hero    win.HFONT
-	dayTemp win.HFONT
-	close   win.HFONT
+	thead  win.HFONT
+	cell   win.HFONT
+	close  win.HFONT
+	symbol win.HFONT // 0 when the Weather Icons face is not usable
+}
+
+// panelMetrics is everything the layout needs to know about the fonts and the
+// strings, so that the arithmetic in layoutTable is a pure function of it.
+type panelMetrics struct {
+	theadH int32
+	cellH  int32
+	closeH int32
+	closeW int32
+	// symbolPx is the symbol's box, and 0 when there is no symbol font. It is
+	// the row's floor the way the GtkImage's height is on the GTK side.
+	symbolPx int32
+	// natural is the widest caption-or-cell in each column, which is what a
+	// GtkGrid column requests before any slack is handed out.
+	natural [numCols]int32
 }
 
 type panel struct {
@@ -247,15 +292,17 @@ type panel struct {
 	inst  win.HINSTANCE
 	title string
 
-	pal panelPalette
-	dpi int32
+	dark bool
+	pal  panelPalette
+	dpi  int32
 
-	date     string
-	hero     string
-	cond     string
-	heroCode int
-	heroIcon *image.RGBA
-	days     []dayItem
+	heads []string
+	rows  []tableRow
+
+	// haveSymbols records whether the embedded typeface was registered with
+	// GDI. Without it the symbol column stays blank rather than filling with
+	// whatever glyphs a substitute face happens to have at those codepoints.
+	haveSymbols bool
 
 	fonts panelFonts
 	geom  panelGeom
@@ -265,6 +312,10 @@ type panel struct {
 	img  *image.RGBA
 	surf *surface
 	mask *surface
+
+	// ulwFlags is settled by show() and reused by every repaint, so a hover
+	// redraw cannot silently switch the window between opaque and blended.
+	ulwFlags uint32
 
 	// armed is set by the first real activation. Until then a WA_INACTIVE must
 	// be ignored: SetForegroundWindow can be refused, and an unarmed panel
@@ -278,31 +329,26 @@ type panel struct {
 }
 
 func newPanel(data []weather.DailyForecast, units, windUnit, theme string, l i18n.Lang) *panel {
-	// windUnit is part of the contract but the card design has no wind field:
-	// the GTK panel dropped the wind and precipitation columns when it became a
-	// card layout, and this is the same design. Named rather than blank so the
-	// signature keeps documenting itself.
-	_ = windUnit
-
-	pal := lightPanelPalette()
-	if resolveDark(theme) {
-		pal = darkPanelPalette()
-	}
-
+	dark := resolveDark(theme)
 	p := &panel{
-		title:    l.ForecastTitle(),
-		pal:      pal,
-		date:     headerDate(data[0].Date, l),
-		hero:     tempRange(data[0], units),
-		cond:     l.Condition(data[0].WeatherCode),
-		heroCode: data[0].WeatherCode,
+		title: l.ForecastTitle(),
+		dark:  dark,
+		// Provisional: show() replaces it once the display has been asked
+		// whether it will composite per-pixel alpha.
+		pal:   panelPaletteFor(dark, true),
+		heads: l.ForecastHeaders(),
 	}
 	for _, d := range data {
-		p.days = append(p.days, dayItem{
-			name: shortDay(d.Date, l),
-			temp: tempRange(d, units),
-			code: d.WeatherCode,
-		})
+		var row tableRow
+		// The ISO date exactly as Open-Meteo returned it. No weekday name and no
+		// localised month: the column is a date, and a sortable one reads the
+		// same in both languages.
+		row.cell[0] = d.Date
+		row.cell[colCond] = fonts.IconForCode(d.WeatherCode)
+		row.cell[2] = tempRange(d, units, l)
+		row.cell[3] = windSpeed(d, windUnit, l)
+		row.cell[4] = precip(d, l)
+		p.rows = append(p.rows, row)
 	}
 	return p
 }
@@ -382,6 +428,9 @@ var (
 	panelMu   sync.Mutex
 	panelBusy bool
 	panelHWND win.HWND
+	// panelClosedAt is when the panel last went away on its own, which
+	// closeOpenPanel needs to tell a closing click from an opening one.
+	panelClosedAt time.Time
 
 	// live maps HWND to panel instead of parking a Go pointer in
 	// GWLP_USERDATA. The usual idiom - pass the struct as CreateWindowEx's
@@ -407,23 +456,51 @@ func releasePanel() {
 	panelMu.Lock()
 	panelBusy = false
 	panelHWND = 0
+	panelClosedAt = time.Now()
 	panelMu.Unlock()
 }
 
-// presentPanel raises the panel that is already open, if there is one, and
-// reports whether it did.
-func presentPanel() bool {
+// raisePanel brings an already-open panel to the front. Used only when two
+// opens race, never as a response to a user click.
+func raisePanel() {
 	panelMu.Lock()
 	hwnd := panelHWND
-	busy := panelBusy
 	panelMu.Unlock()
-	if !busy {
-		return false
-	}
 	if hwnd != 0 {
 		forceForeground(hwnd)
 	}
-	return true
+}
+
+// closeOpenPanel makes the tray icon a toggle: if the panel is up, the click
+// that would have opened it closes it instead. It reports whether it consumed
+// the click.
+//
+// The grace period exists because of an ordering hazard outside this function's
+// own logic. Clicking the tray icon can move focus away from the panel, and the
+// panel closes itself on focus loss - so by the time the host delivers the click
+// the panel may already be gone, and a naive toggle would see "not open" and
+// open a new one. Treating a click that lands just after a focus-loss close as
+// the closing click is what makes the second click dismiss the window rather
+// than reopen it.
+func closeOpenPanel() bool {
+	panelMu.Lock()
+	hwnd := panelHWND
+	busy := panelBusy
+	closedAt := panelClosedAt
+	panelMu.Unlock()
+
+	if busy {
+		if hwnd != 0 {
+			win.PostMessage(hwnd, win.WM_CLOSE, 0, 0)
+		}
+		return true
+	}
+	if !closedAt.IsZero() && time.Since(closedAt) < toggleGrace {
+		// Worth a line: to the user this click did nothing at all.
+		log.Print("forecast: click within the toggle grace period, treated as the closing click")
+		return true
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +517,9 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	// nothing: a goroutine that exits while its thread is locked takes the
 	// thread down with it.
 	if !claimPanel() {
-		presentPanel()
+		// Not the toggle: this is two opens racing, so the one that lost raises
+		// the winner rather than closing it.
+		raisePanel()
 		return
 	}
 	defer releasePanel()
@@ -504,6 +583,15 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		return
 	}
 
+	// The symbol column is drawn with the OS-registered face, so the typeface
+	// has to be handed to GDI before any font is created from it. Load is
+	// idempotent and process-wide; the panel is a singleton, so this is the
+	// only caller that can be running.
+	p.haveSymbols = fonts.Load()
+	if !p.haveSymbols {
+		log.Printf("forecast: could not register the weather typeface; the symbol column will be blank")
+	}
+
 	work, haveWork := win.RECT{}, false
 	if haveAt {
 		work, haveWork = pointerWork(at)
@@ -523,8 +611,7 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		p.x, p.y = panelCorner(at.X, at.Y, p.w, p.h, scaleDPI(panelEdgeGap, p.dpi), work)
 	}
 
-	p.paint()
-	if !p.push() {
+	if !p.show() {
 		win.DestroyWindow(p.hwnd)
 		p.release()
 		return
@@ -557,11 +644,79 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	}
 }
 
+// perPixelAlpha reports whether THIS display will honour the panel's per-pixel
+// alpha, asked of the system rather than assumed.
+//
+// The condition is documented on ULW_ALPHA itself: "If the display mode is 256
+// colors or less, the effect of this value is the same as the effect of
+// ULW_OPAQUE." That is the trap, because the call still SUCCEEDS - it simply
+// ignores the alpha channel - so failure is not detectable after the fact, and
+// the translucent palette would then be composited as though it were opaque: the
+// sheet's premultiplied 82% colour drawn flat, with the four rounded corners
+// showing whatever the zeroed pixels outside the sheet happen to be, which is
+// black. That is exactly the black-notch failure the GTK stylesheet keeps a
+// solid palette for.
+//
+// A colour depth of 256 or fewer means at most 8 bits per pixel, and the depth
+// is BITSPIXEL times PLANES: BITSPIXEL is "the number of adjacent color bits for
+// each pixel" and PLANES "the number of color planes", so a planar 4-plane
+// 1-bit device answers 1 and 4 and is correctly read as 4bpp. Zero bits means
+// the question could not be answered, and the answer that always displays
+// correctly is the opaque one.
+//
+// It must be a DC for the SCREEN. A memory DC reports the depth of the bitmap
+// currently selected into it, which for a freshly created one is the default 1x1
+// monochrome bitmap - 1bpp, and every desktop would fail the test.
+func perPixelAlpha(hwnd win.HWND) bool {
+	dc := win.GetDC(hwnd)
+	if dc == 0 {
+		return false
+	}
+	defer win.ReleaseDC(hwnd, dc)
+
+	bits := win.GetDeviceCaps(dc, win.BITSPIXEL)
+	planes := win.GetDeviceCaps(dc, win.PLANES)
+	if planes < 1 {
+		// Every raster display reports exactly one plane, so a zero here is a
+		// driver that declined to answer rather than a plane-less device. Taking
+		// it literally would multiply a perfectly good 32bpp depth to nothing
+		// and make every desktop opaque.
+		planes = 1
+	}
+	return bits*planes > 8
+}
+
+// show paints the panel in the palette this display can actually show and gets
+// it onto the screen.
+//
+// The two palettes are the translucent and solid halves of the same design, and
+// which one is used is decided by perPixelAlpha, never assumed. The solid one
+// squares the sheet's corners and fills every pixel of the window opaquely, and
+// the flag becomes ULW_OPAQUE, the documented "draw an opaque layered window".
+func (p *panel) show() bool {
+	translucent := perPixelAlpha(p.hwnd)
+	p.pal = panelPaletteFor(p.dark, translucent)
+	p.ulwFlags = ulwAlpha
+	if !translucent {
+		p.ulwFlags = ulwOpaque
+		log.Printf("forecast: the display cannot composite per-pixel alpha; drawing the panel opaque")
+	}
+
+	p.paint()
+	ok, errno := p.push()
+	if !ok {
+		// A silent failure here produces an invisible window, which reads to
+		// the user as "the menu item does nothing".
+		log.Printf("forecast: UpdateLayeredWindow failed: %v", errno)
+	}
+	return ok
+}
+
 // push hands the finished surface to the compositor. The one call moves,
 // resizes and repaints the window, which is why no SetWindowPos is needed.
-func (p *panel) push() bool {
+func (p *panel) push() (bool, syscall.Errno) {
 	if p.surf == nil {
-		return false
+		return false, 0
 	}
 	ptDst := win.POINT{X: p.x, Y: p.y}
 	ptSrc := win.POINT{X: 0, Y: 0}
@@ -571,29 +726,30 @@ func (p *panel) push() bool {
 		BlendFlags: 0,
 		// 255 is mandatory, not merely sensible: "Set the SourceConstantAlpha
 		// value to 255 (opaque) when you only want to use per-pixel alpha
-		// values." Anything less multiplies the whole panel down again.
+		// values." Anything less multiplies the whole panel down again. It is
+		// read only under ULW_ALPHA; ULW_OPAQUE ignores pblend entirely.
 		SourceConstantAlpha: 255,
 		AlphaFormat:         win.AC_SRC_ALPHA,
 	}
-	ok, errno := updateLayeredWindow(p.hwnd, 0, &ptDst, &size,
-		p.surf.dc, &ptSrc, 0, &blend, ulwAlpha)
-	if !ok {
-		// A silent failure here produces an invisible window, which reads to
-		// the user as "the menu item does nothing".
-		log.Printf("forecast: UpdateLayeredWindow failed: %v", errno)
-	}
-	return ok
+	return updateLayeredWindow(p.hwnd, 0, &ptDst, &size,
+		p.surf.dc, &ptSrc, 0, &blend, p.ulwFlags)
 }
 
-// release frees every GDI object the panel owns. Fonts are only ever selected
-// into the mask DC for the duration of one drawTextGroup call and are always
-// deselected afterwards, so none of them is still selected here - DeleteObject
-// refuses to free a selected object, and a font that fails to delete leaks for
-// the life of the process.
+// release frees every GDI object the panel owns.
+//
+// The DCs go first and the fonts second, which is the order that cannot leak.
+// DeleteObject refuses to free a GDI object that is still selected into a DC,
+// and a font that fails to delete leaks for the life of the process; deleting
+// the DC discards whatever was selected into it, so by the time freeFonts runs
+// there is provably no DC left to hold one. drawTextGroup does deselect the font
+// it selected, but this way the invariant does not depend on that.
+//
+// Both dispose and freeFonts are idempotent and nil-safe, so release can be
+// called twice - which it is, on the failure paths in run().
 func (p *panel) release() {
-	p.freeFonts()
 	p.surf.dispose()
 	p.mask.dispose()
+	p.freeFonts()
 	p.surf = nil
 	p.mask = nil
 	p.img = nil
@@ -669,20 +825,48 @@ func (p *panel) build(work win.RECT, haveWork bool) bool {
 	return true
 }
 
+// makeFonts creates the fonts for this DPI. It returns false only when a font
+// the table cannot do without is missing; the symbol face is optional, and its
+// absence leaves that column blank.
 func (p *panel) makeFonts() bool {
+	// Weight 600 on the captions and nothing else: `.thead { font-weight: 600 }`
+	// is the whole of what separates the header row from the data, one size for
+	// the entire table.
 	p.fonts = panelFonts{
-		muted:   panelFont(mutedPt, win.FW_NORMAL, p.dpi),
-		cond:    panelFont(condPt, win.FW_NORMAL, p.dpi),
-		hero:    panelFont(heroPt, win.FW_LIGHT, p.dpi),
-		dayTemp: panelFont(dayTempPt, win.FW_SEMIBOLD, p.dpi),
-		close:   panelFont(closePt, win.FW_NORMAL, p.dpi),
+		thead: panelFont(theadPt, win.FW_SEMIBOLD, p.dpi),
+		cell:  panelFont(cellPt, win.FW_NORMAL, p.dpi),
+		close: panelFont(closePt, win.FW_BOLD, p.dpi),
 	}
-	f := p.fonts
-	return f.muted != 0 && f.cond != 0 && f.hero != 0 && f.dayTemp != 0 && f.close != 0
+	if p.fonts.thead == 0 || p.fonts.cell == 0 || p.fonts.close == 0 {
+		return false
+	}
+	if !p.haveSymbols {
+		return true
+	}
+
+	// The symbol is sized in PIXELS, not points: symbolPt is the ink size
+	// fonts.Glyph is given on the GTK side, and these glyphs draw at about one
+	// em, so an em of that many pixels is the closest the two get.
+	f := panelFontPx(scaleDPI(symbolPt, p.dpi), win.FW_NORMAL, weatherIconsFace)
+	if f == 0 {
+		return true
+	}
+	// CreateFontIndirect never fails on an unknown face name: with
+	// DEFAULT_CHARSET it substitutes "any font with the specified attributes",
+	// and the symbol column would then fill with whatever that face draws at
+	// U+F0xx - boxes, or worse, plausible-looking letters. GetTextFace reports
+	// the face GDI actually realised, which is the only way to tell.
+	if name, ok := faceOf(f); ok && !strings.EqualFold(name, weatherIconsFace) {
+		log.Printf("forecast: %q resolved to %q; the symbol column will be blank", weatherIconsFace, name)
+		win.DeleteObject(win.HGDIOBJ(f))
+		return true
+	}
+	p.fonts.symbol = f
+	return true
 }
 
 func (p *panel) freeFonts() {
-	for _, f := range []win.HFONT{p.fonts.muted, p.fonts.cond, p.fonts.hero, p.fonts.dayTemp, p.fonts.close} {
+	for _, f := range []win.HFONT{p.fonts.thead, p.fonts.cell, p.fonts.close, p.fonts.symbol} {
 		if f != 0 {
 			win.DeleteObject(win.HGDIOBJ(f))
 		}
@@ -690,121 +874,161 @@ func (p *panel) freeFonts() {
 	p.fonts = panelFonts{}
 }
 
-// measure computes every rectangle in the panel and the panel's own size.
+// measure asks GDI for the font metrics and the width of every string, then
+// hands them to layoutTable.
 //
-// It follows the GTK box model exactly: a page with padding, a header card and
-// a homogeneous strip of day cards, each card a vertical box of fixed-height
-// rows separated by its spacing. Heights come from the font metrics rather than
-// from constants, which is what stops a locale with taller glyphs from clipping.
+// Measuring all 40-odd strings is what makes the columns come out the width a
+// GtkGrid gives them: each column requests its widest cell, and only the slack
+// left over is shared. It costs one GetTextExtentPoint32 per string against a
+// 1x1 memory DC, which is nothing beside the fetch that preceded it.
 func (p *panel) measure() {
-	s := func(v int) int32 { return scaleDPI(v, p.dpi) }
-
 	m := newMeasureDC()
 	defer m.dispose()
 
-	mutedH := m.lineHeight(p.fonts.muted)
-	condH := m.lineHeight(p.fonts.cond)
-	heroH := m.lineHeight(p.fonts.hero)
-	tempH := m.lineHeight(p.fonts.dayTemp)
-	closeH := m.lineHeight(p.fonts.close)
+	met := panelMetrics{
+		theadH: m.lineHeight(p.fonts.thead),
+		cellH:  m.lineHeight(p.fonts.cell),
+		closeH: m.lineHeight(p.fonts.close),
+		closeW: m.width(closeGlyph, p.fonts.close),
+	}
+	if p.fonts.symbol != 0 {
+		met.symbolPx = scaleDPI(symbolPt, p.dpi)
+	}
 
-	heroW := m.width(p.hero, p.fonts.hero)
-	closeW := m.width(closeGlyph, p.fonts.close)
+	for i := 0; i < numCols; i++ {
+		w := int32(0)
+		if i < len(p.heads) {
+			w = m.width(p.heads[i], p.fonts.thead)
+		}
+		if i == colCond {
+			// The GTK column requests the symbol tile, which is square and
+			// symbolPx on a side. Here the glyph's own advance width is measured
+			// too, so a glyph wider than its em cannot be clipped by a column
+			// sized only for the caption.
+			w = max(w, met.symbolPx)
+			for r := range p.rows {
+				w = max(w, m.width(p.rows[r].cell[i], p.fonts.symbol))
+			}
+		} else {
+			for r := range p.rows {
+				w = max(w, m.width(p.rows[r].cell[i], p.fonts.cell))
+			}
+		}
+		met.natural[i] = w
+	}
 
-	// Artwork. The icons are built here rather than once at construction
-	// because their pixel size follows the DPI, and the DPI can still change
-	// while build() is fitting the layout to the screen.
-	heroIconPx := s(heroIconPt)
-	p.heroIcon = panelIcon(p.heroCode, heroIconPx)
-	if p.heroIcon == nil {
-		heroIconPx = 0
-	}
-	dayIconPx := s(dayIconPt)
-	for i := range p.days {
-		p.days[i].icon = panelIcon(p.days[i].code, dayIconPx)
-	}
-	if len(p.days) > 0 && p.days[0].icon == nil {
-		dayIconPx = 0
-	}
+	p.geom, p.w, p.h = layoutTable(met, p.dpi, len(p.rows))
+}
+
+// layoutTable computes every rectangle in the panel and the panel's own size.
+//
+// The vertical rhythm is the GTK grid's: a caption row, rowGapY, the rule,
+// rowGapY, then each data row separated from the next by rowGapY, a hairline and
+// rowGapY again. Row heights come from the font metrics and the symbol box
+// rather than from constants, which is what stops a locale with taller glyphs
+// from clipping.
+//
+// The horizontal rhythm is a GtkGrid of expanding cells: every column asks for
+// its widest cell, and the slack left over after the gaps are paid for is shared
+// out EQUALLY, which is what GTK does with expanding grid columns. Equal fifths
+// would be simpler and wrong - it would give the symbol column as much room as
+// "Температура" needs and starve the date.
+//
+// It is a pure function of its arguments on purpose: it is the one piece of this
+// file whose arithmetic can be checked away from Windows.
+func layoutTable(m panelMetrics, dpi int32, n int) (panelGeom, int32, int32) {
+	s := func(v int) int32 { return scaleDPI(v, dpi) }
 
 	pad := s(pagePad)
-	p.w = s(panelWidthPt)
-	innerW := p.w - 2*pad
-	contentL := pad + s(cardPadX)
-	contentR := p.w - pad - s(cardPadX)
+	w := s(panelWidthPt)
+	contentL := pad
+	contentR := w - pad
+	cw := contentR - contentL
 
-	closeBoxW := min(closeW+2*s(closePadX), contentR-contentL)
-	closeBoxH := closeH + 2*s(closePadY)
+	closeBoxW := min(m.closeW+2*s(closePadX), cw)
+	closeBoxH := m.closeH + 2*s(closePadY)
 
-	topH := max(mutedH, closeBoxH)
-	heroRowH := max(heroH, heroIconPx, condH)
-	headerH := 2*s(cardPadY) + topH + s(cardGapY) + heroRowH
+	gap := s(rowGapY)
+	ruleTh := max(1, s(rulePt))
+	rowH := max(m.cellH, m.symbolPx)
 
-	dayH := 2*s(dayPadY) + mutedH + s(dayGapY) + dayIconPx + s(dayGapY) + tempH
-	if dayIconPx == 0 {
-		dayH -= s(dayGapY)
+	rows := int32(n)
+	tableH := m.theadH + gap + ruleTh + gap + rows*rowH
+	if rows > 1 {
+		tableH += (rows - 1) * (2*gap + ruleTh)
 	}
 
-	p.h = 2*pad + headerH + s(pageGapY) + dayH
+	h := s(pagePadTop) + pad + closeBoxH + s(pageGapY) + tableH
 
-	g := panelGeom{}
-	g.header = rectAt(pad, pad, innerW, headerH)
+	var g panelGeom
+	// The window IS the sheet: no inner card, and the padding is inside it.
+	g.sheet = rectAt(0, 0, w, h)
+	g.closeBox = rectAt(contentR-closeBoxW, pad, closeBoxW, closeBoxH)
 
-	topY := pad + s(cardPadY)
-	g.closeBox = rectAt(contentR-closeBoxW, topY+(topH-closeBoxH)/2, closeBoxW, closeBoxH)
-	g.date = win.RECT{
-		Left:   contentL,
-		Top:    topY,
-		Right:  max(contentL, g.closeBox.Left-s(topRowGap)),
-		Bottom: topY + topH,
+	colL, colR := tableColumns(m.natural, contentL, contentR, s(colGapX))
+
+	headY := pad + closeBoxH + s(pageGapY)
+	for i := 0; i < numCols; i++ {
+		g.head[i] = win.RECT{Left: colL[i], Top: headY, Right: colR[i], Bottom: headY + m.theadH}
 	}
+	g.rule = rectAt(contentL, headY+m.theadH+gap, cw, ruleTh)
 
-	rowY := topY + topH + s(cardGapY)
-	g.hero = win.RECT{Left: contentL, Top: rowY, Right: min(contentL+heroW, contentR), Bottom: rowY + heroRowH}
-
-	condL := g.hero.Right
-	if heroIconPx > 0 {
-		iconX := g.hero.Right + s(heroRowGap)
-		if iconX+heroIconPx > contentR {
-			// No room beside the temperature. Dropping the artwork is better
-			// than overlapping it with the numbers.
-			p.heroIcon = nil
-			heroIconPx = 0
-		} else {
-			g.heroIcon = win.POINT{X: iconX, Y: rowY + (heroRowH-heroIconPx)/2}
-			condL = iconX + heroIconPx
+	rowsY := g.rule.Bottom + gap
+	g.rows = make([]rowGeom, n)
+	for r := 0; r < n; r++ {
+		y := rowsY + int32(r)*(rowH+2*gap+ruleTh)
+		for i := 0; i < numCols; i++ {
+			g.rows[r].cell[i] = win.RECT{Left: colL[i], Top: y, Right: colR[i], Bottom: y + rowH}
+		}
+		if r < n-1 {
+			g.rows[r].sep = rectAt(contentL, y+rowH+gap, cw, ruleTh)
 		}
 	}
-	g.cond = win.RECT{Left: min(condL+s(heroRowGap), contentR), Top: rowY, Right: contentR, Bottom: rowY + heroRowH}
+	return g, w, h
+}
 
-	// The day strip is homogeneous. Positions are derived from a single
-	// division so the rounding error is spread instead of accumulating into a
-	// wider last card.
-	stripY := pad + headerH + s(pageGapY)
-	n := int32(len(p.days))
-	gap := s(stripGap)
-	for i := int32(0); i < n; i++ {
-		x := pad + (innerW+gap)*i/n
-		w := (innerW+gap)*(i+1)/n - gap - (innerW+gap)*i/n
-
-		var d dayGeom
-		d.card = rectAt(x, stripY, w, dayH)
-
-		ty := stripY + s(dayPadY)
-		inner := rectAt(x+s(dayPadX), ty, max(0, w-2*s(dayPadX)), mutedH)
-		d.name = inner
-
-		iy := ty + mutedH + s(dayGapY)
-		if dayIconPx > 0 {
-			d.icon = win.POINT{X: x + (w-dayIconPx)/2, Y: iy}
-			iy += dayIconPx + s(dayGapY)
-		}
-		d.temp = rectAt(x+s(dayPadX), iy, max(0, w-2*s(dayPadX)), tempH)
-
-		g.days = append(g.days, d)
+// tableColumns turns the columns' natural widths into their left and right
+// edges, spanning exactly contentL to contentR.
+//
+// Slack is shared equally, and shared from a single running division so the
+// rounding error is spread instead of landing on the last column. If the natural
+// widths do not fit at all - a very narrow layout, or a locale with much longer
+// captions - every column is scaled down in proportion and DT_END_ELLIPSIS
+// truncates what is left, which is the one outcome that keeps the columns in
+// order and inside the sheet.
+func tableColumns(natural [numCols]int32, contentL, contentR, gapX int32) (colL, colR [numCols]int32) {
+	avail := contentR - contentL - (numCols-1)*gapX
+	if avail < 0 {
+		avail = 0
 	}
 
-	p.geom = g
+	sum := int32(0)
+	for _, v := range natural {
+		sum += v
+	}
+	if sum > avail && sum > 0 {
+		for i := range natural {
+			natural[i] = natural[i] * avail / sum
+		}
+		sum = 0
+		for _, v := range natural {
+			sum += v
+		}
+	}
+
+	extra := avail - sum
+	if extra < 0 {
+		extra = 0
+	}
+
+	x := contentL
+	for i := 0; i < numCols; i++ {
+		share := extra*int32(i+1)/numCols - extra*int32(i)/numCols
+		colL[i] = x
+		colR[i] = x + natural[i] + share
+		x = colR[i] + gapX
+	}
+	return colL, colR
 }
 
 func rectAt(x, y, w, h int32) win.RECT {
@@ -823,9 +1047,9 @@ func (p *panel) paint() {
 	if p.img == nil || p.surf == nil {
 		return
 	}
-	// Start fully transparent. Every pixel the design does not claim stays at
-	// alpha 0, which is also what makes the gaps between the cards pass mouse
-	// clicks through to the desktop.
+	// Start fully transparent. In the translucent palette the only pixels the
+	// design never claims are the four rounded corners, and their alpha 0 is
+	// what lets a click there fall through to the desktop.
 	for i := range p.img.Pix {
 		p.img.Pix[i] = 0
 	}
@@ -833,28 +1057,16 @@ func (p *panel) paint() {
 	g := &p.geom
 	s := func(v int) int32 { return scaleDPI(v, p.dpi) }
 
-	roundRect(p.img, g.header.Left, g.header.Top,
-		g.header.Right-g.header.Left, g.header.Bottom-g.header.Top,
-		float32(s(cardRadiusPt)), p.pal.card)
-
-	for i := range g.days {
-		card := g.days[i].card
-		w, h := card.Right-card.Left, card.Bottom-card.Top
-		r := float32(s(dayRadiusPt))
-		fill := p.pal.card
-		if i == 0 {
-			fill = p.pal.today
-		}
-		roundRect(p.img, card.Left, card.Top, w, h, r, fill)
-		if i == 0 {
-			// Today is outlined. The ring goes ON TOP of the finished fill; see
-			// roundRing for why the other order ruins the translucency.
-			roundRing(p.img, card.Left, card.Top, w, h, r, float32(s(dayBorderPt)), p.pal.border)
-		}
-		drawImage(p.img, p.days[i].icon, g.days[i].icon.X, g.days[i].icon.Y)
+	if r := s(p.pal.radiusPt); r > 0 {
+		roundRect(p.img, g.sheet.Left, g.sheet.Top,
+			g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top,
+			float32(r), p.pal.sheet)
+	} else {
+		// Square corners: no rasteriser, and therefore no degenerate Bezier at
+		// each corner to reason about.
+		paintRect(p.img, g.sheet.Left, g.sheet.Top,
+			g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top, p.pal.sheet)
 	}
-
-	drawImage(p.img, p.heroIcon, g.heroIcon.X, g.heroIcon.Y)
 
 	if p.hover {
 		roundRect(p.img, g.closeBox.Left, g.closeBox.Top,
@@ -862,45 +1074,82 @@ func (p *panel) paint() {
 			float32(s(closeRadiusPt)), p.pal.hoverFill)
 	}
 
-	const centred = win.DT_CENTER | win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX
+	paintRect(p.img, g.rule.Left, g.rule.Top,
+		g.rule.Right-g.rule.Left, g.rule.Bottom-g.rule.Top, p.pal.rule)
+	for i := range g.rows {
+		sep := g.rows[i].sep
+		// The last row's hairline is the zero RECT; paintRect draws nothing for
+		// a zero-sized rectangle.
+		paintRect(p.img, sep.Left, sep.Top,
+			sep.Right-sep.Left, sep.Bottom-sep.Top, p.pal.sep)
+	}
 
-	muted := []textRun{{
-		text:  p.date,
-		rect:  g.date,
-		flags: win.DT_LEFT | win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX | win.DT_END_ELLIPSIS,
-		font:  p.fonts.muted,
-	}}
-	strong := []textRun{{
-		text:  p.hero,
-		rect:  g.hero,
-		flags: win.DT_LEFT | win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX,
-		font:  p.fonts.hero,
-	}}
-	cond := []textRun{{
-		text:  p.cond,
-		rect:  g.cond,
-		flags: win.DT_RIGHT | win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX | win.DT_END_ELLIPSIS,
-		font:  p.fonts.cond,
-	}}
-	for i := range g.days {
-		muted = append(muted, textRun{
-			text: p.days[i].name, rect: g.days[i].name, flags: centred, font: p.fonts.muted,
-		})
-		strong = append(strong, textRun{
-			text: p.days[i].temp, rect: g.days[i].temp, flags: centred, font: p.fonts.dayTemp,
+	const cellFlags = win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX
+
+	caps := make([]textRun, 0, numCols)
+	for i := 0; i < numCols && i < len(p.heads); i++ {
+		caps = append(caps, textRun{
+			text:  p.heads[i],
+			rect:  g.head[i],
+			flags: colAlign[i] | cellFlags | win.DT_END_ELLIPSIS,
+			font:  p.fonts.thead,
 		})
 	}
 
-	drawTextGroup(p.img, p.mask, muted, p.pal.muted[0], p.pal.muted[1], p.pal.muted[2])
-	drawTextGroup(p.img, p.mask, cond, p.pal.cond[0], p.pal.cond[1], p.pal.cond[2])
-	drawTextGroup(p.img, p.mask, strong, p.pal.text[0], p.pal.text[1], p.pal.text[2])
+	cells := make([]textRun, 0, len(p.rows)*numCols)
+	for r := range p.rows {
+		for i := 0; i < numCols; i++ {
+			if i == colCond {
+				if p.fonts.symbol == 0 {
+					continue
+				}
+				cells = append(cells, textRun{
+					text: p.rows[r].cell[i],
+					rect: g.rows[r].cell[i],
+					// DT_NOCLIP, and it is load-bearing. The row is the height
+					// of the symbol's BOX, matching the GtkImage on the other
+					// side, but GDI positions text by its LINE box, which in
+					// this typeface is 1.45 em - taller than the row. Clipping
+					// to the row would shave the top and bottom off every
+					// symbol. What overhangs is mostly the font's empty ascent
+					// and descent: the ink is about one em, centred to within a
+					// sixth of an em, so it reaches at most about a quarter of
+					// the row beyond the edge and stays clear of the hairline
+					// rowGapY away. Nothing can escape the bitmap either - GDI
+					// clips to the DC.
+					//
+					// No ellipsis on a single glyph either: DT_END_ELLIPSIS
+					// would replace the symbol with "..." rather than shrink it.
+					flags: colAlign[i] | cellFlags | win.DT_NOCLIP,
+					font:  p.fonts.symbol,
+				})
+				continue
+			}
+			cells = append(cells, textRun{
+				text:  p.rows[r].cell[i],
+				rect:  g.rows[r].cell[i],
+				flags: colAlign[i] | cellFlags | win.DT_END_ELLIPSIS,
+				font:  p.fonts.cell,
+			})
+		}
+	}
 
-	closeColour := p.pal.muted
+	// The symbols share the cells' group because they share its colour: the
+	// palette's foreground, which is the same value forecast_linux.go tints its
+	// rasterised glyphs with. One group is one full-surface composite pass, so
+	// folding them in is free.
+	drawTextGroup(p.img, p.mask, caps, p.pal.thead[0], p.pal.thead[1], p.pal.thead[2])
+	drawTextGroup(p.img, p.mask, cells, p.pal.text[0], p.pal.text[1], p.pal.text[2])
+
+	closeColour := p.pal.thead
 	if p.hover {
 		closeColour = p.pal.text
 	}
 	drawTextGroup(p.img, p.mask, []textRun{{
-		text: closeGlyph, rect: g.closeBox, flags: centred, font: p.fonts.close,
+		text:  closeGlyph,
+		rect:  g.closeBox,
+		flags: win.DT_CENTER | cellFlags,
+		font:  p.fonts.close,
 	}}, closeColour[0], closeColour[1], closeColour[2])
 
 	p.surf.blitFrom(p.img)
@@ -910,7 +1159,9 @@ func (p *panel) paint() {
 // the entire window, so there is no partial-invalidate path and no WM_PAINT.
 func (p *panel) repaint() {
 	p.paint()
-	p.push()
+	if ok, errno := p.push(); !ok {
+		log.Printf("forecast: UpdateLayeredWindow failed on repaint: %v", errno)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -944,6 +1195,11 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	case win.WM_ACTIVATE:
 		if win.LOWORD(uint32(wParam)) == win.WA_INACTIVE {
 			if p.armed {
+				// Any window taking activation lands here, not just one the
+				// user clicked - a notification or a background window will
+				// close the panel too. The line is here because an unexplained
+				// disappearance is otherwise indistinguishable from a crash.
+				log.Print("forecast: closing, focus lost")
 				p.requestClose()
 			}
 			return 0
@@ -962,7 +1218,7 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		x, y := clientPoint(lParam)
 		if !p.tracking {
 			// Without a leave notification the close button stays highlighted
-			// after the pointer exits through a transparent gap, where no
+			// after the pointer exits through a transparent corner, where no
 			// further WM_MOUSEMOVE is ever delivered.
 			tme := win.TRACKMOUSEEVENT{
 				CbSize:    uint32(unsafe.Sizeof(win.TRACKMOUSEEVENT{})),
@@ -986,11 +1242,11 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 
 	case win.WM_LBUTTONUP:
-		// Hit testing on a layered window follows the alpha channel: pixels
-		// whose alpha is zero - the gaps between the cards, and the page
-		// padding around them - let the click through to whatever is
-		// underneath, which deactivates this window and closes it through
-		// WM_ACTIVATE above. Only card pixels ever arrive here.
+		// Hit testing on a layered window follows the alpha channel: the four
+		// rounded corners, where the alpha is zero, let a click through to
+		// whatever is underneath, which deactivates this window and closes it
+		// through WM_ACTIVATE above. Everywhere else lands here, and only the
+		// close button does anything with it.
 		x, y := clientPoint(lParam)
 		if rectContains(p.geom.closeBox, x, y) {
 			p.requestClose()

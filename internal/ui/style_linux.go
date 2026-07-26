@@ -4,7 +4,7 @@ package ui
 
 // forecastCSS is the application stylesheet for the forecast panel.
 //
-// Three rules govern everything here, all learned by measurement against the
+// Four rules govern everything here, all learned by measurement against the
 // BlackMATE desktop theme and the Marco window manager:
 //
 // Every selector is scoped under #nimbus-forecast. The provider is installed
@@ -19,16 +19,23 @@ package ui
 // `image, label { padding: 3px; }`, so a colour set on the window reaches no
 // label at all, and every label silently gains 6px unless told otherwise.
 //
+// Separators are the one node the reset must not touch. A GtkSeparator has no
+// content: its entire appearance is a 1px minimum size plus a background
+// colour, so the `min-height: 0` that the reset needs everywhere else would
+// make every rule in the table vanish. It gets its own reset, one line
+// different.
+//
 // Four palettes live in this one sheet - dark and light, each solid and
 // translucent - because LoadCSS installs a single provider for the life of the
 // process. The translucent halves are only ever selected when the window
 // actually got an RGBA visual; without a compositor their alpha would be
-// composited against black and every rounded corner would render as a black
-// notch.
+// composited against black, and the rounded corners the translucent palettes
+// ask for would render as black notches.
 const forecastCSS = `
 /* Reset: undo what the desktop theme states on these nodes. */
 #nimbus-forecast,
 #nimbus-forecast box,
+#nimbus-forecast grid,
 #nimbus-forecast label,
 #nimbus-forecast image,
 #nimbus-forecast button {
@@ -43,79 +50,65 @@ const forecastCSS = `
   text-shadow: none;
 }
 
+/* Same reset, except for the min-height that IS the rule. */
+#nimbus-forecast separator {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  min-height: 1px;
+  border: none;
+  background-image: none;
+  box-shadow: none;
+}
+
 #nimbus-forecast .page {
-  padding: 14px;
+  padding: 4px 14px 14px 14px;   /* pagePadTop, then pagePad */
 }
 
-#nimbus-forecast .card {
-  border-radius: 14px;
-  padding: 16px 18px;
-}
-
-#nimbus-forecast .hero {
-  font-size: 34pt;
-  font-weight: 300;
-}
-
-#nimbus-forecast .cond  { font-size: 13pt; }
-#nimbus-forecast .muted { font-size: 11pt; }
-
-#nimbus-forecast .day {
-  border-radius: 12px;
-  padding: 12px 6px;
-  border: 1px solid transparent;
-}
-
-#nimbus-forecast .day label { font-size: 11pt; }
-
-#nimbus-forecast .daytemp {
-  font-size: 11pt;
+/* Table type. One size for the whole table: a header row that shouts is a
+   card-layout habit, and weight alone separates it from the data. */
+#nimbus-forecast .thead {
+  font-size: 11pt;     /* theadPt */
   font-weight: 600;
 }
 
+#nimbus-forecast .cell {
+  font-size: 11pt;     /* cellPt */
+}
+
 /* The panel has no title bar, so closing it needs a visible affordance. */
+/* Bold as well as larger: U+00D7 has thin strokes and little ink for its em,
+   so size alone barely reads. It is kept over a heavier codepoint like U+2715
+   because every font ships it. */
 #nimbus-forecast .close {
-  font-size: 13pt;
-  padding: 2px 8px;
-  border-radius: 8px;
+  font-size: 15pt;     /* closePt */
+  font-weight: bold;
+  padding: 0 9px;      /* closePadY closePadX */
+  border-radius: 8px;  /* closeRadiusPt */
   background-color: transparent;
 }
 
 /* ---- dark ---- */
 #nimbus-forecast.dark label            { color: #f2f4f7; }
-#nimbus-forecast.dark .muted           { color: #9aa3b0; }
-#nimbus-forecast.dark .cond            { color: #d6dbe3; }
+#nimbus-forecast.dark .thead           { color: #9aa3b0; }
+#nimbus-forecast.dark separator        { background-color: rgba(255,255,255,0.10); }
+#nimbus-forecast.dark .rule            { background-color: rgba(255,255,255,0.28); }
 #nimbus-forecast.dark .close           { color: #9aa3b0; }
 #nimbus-forecast.dark .close:hover     { background-color: rgba(255,255,255,0.10); color: #f2f4f7; }
-#nimbus-forecast.dark .day.today       { border-color: #6f7b8d; }
 
-#nimbus-forecast.dark.solid                  { background-color: #16181d; }
-#nimbus-forecast.dark.solid .card,
-#nimbus-forecast.dark.solid .day             { background-color: #21242b; }
-#nimbus-forecast.dark.solid .day.today       { background-color: #272b34; }
-
-#nimbus-forecast.dark.translucent            { background-color: rgba(0,0,0,0); }
-#nimbus-forecast.dark.translucent .card,
-#nimbus-forecast.dark.translucent .day       { background-color: rgba(28,31,38,0.82);
-                                               box-shadow: 0 2px 10px rgba(0,0,0,0.45); }
-#nimbus-forecast.dark.translucent .day.today { background-color: rgba(42,47,57,0.88); }
+#nimbus-forecast.dark.solid            { background-color: #1c1f26; }
+#nimbus-forecast.dark.translucent      { background-color: rgba(28,31,38,0.96);
+                                         border-radius: 14px; /* sheetRadiusPt */ }
 
 /* ---- light ---- */
 #nimbus-forecast.light label            { color: #14161a; }
-#nimbus-forecast.light .muted           { color: #5b6472; }
-#nimbus-forecast.light .cond            { color: #38414f; }
+#nimbus-forecast.light .thead           { color: #5b6472; }
+#nimbus-forecast.light separator        { background-color: rgba(0,0,0,0.10); }
+#nimbus-forecast.light .rule            { background-color: rgba(0,0,0,0.24); }
 #nimbus-forecast.light .close           { color: #5b6472; }
 #nimbus-forecast.light .close:hover     { background-color: rgba(0,0,0,0.08); color: #14161a; }
-#nimbus-forecast.light .day.today       { border-color: #9aa6b6; }
 
-#nimbus-forecast.light.solid                  { background-color: #eef1f5; }
-#nimbus-forecast.light.solid .card,
-#nimbus-forecast.light.solid .day             { background-color: #ffffff; }
-#nimbus-forecast.light.solid .day.today       { background-color: #e7ecf3; }
-
-#nimbus-forecast.light.translucent            { background-color: rgba(0,0,0,0); }
-#nimbus-forecast.light.translucent .card,
-#nimbus-forecast.light.translucent .day       { background-color: rgba(255,255,255,0.88);
-                                                box-shadow: 0 2px 10px rgba(0,0,0,0.22); }
-#nimbus-forecast.light.translucent .day.today { background-color: rgba(226,233,242,0.94); }
+#nimbus-forecast.light.solid            { background-color: #ffffff; }
+#nimbus-forecast.light.translucent      { background-color: rgba(255,255,255,0.98);
+                                          border-radius: 14px; /* sheetRadiusPt */ }
 `
