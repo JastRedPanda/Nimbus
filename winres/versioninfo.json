@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Source for the VERSIONINFO resource shown in the .exe Properties dialog",
+    "and in Task Manager's Details tab. Compiled into nimbus_windows_amd64.syso",
+    "as RT_VERSION resource 1 by `make resource`.",
+    "",
+    "FileVersion and ProductVersion are left empty here on purpose: the",
+    "generator fills them from -version, which the Makefile feeds from the",
+    "same `git describe` value that -ldflags injects into internal/build.",
+    "Hard-coding a version here would let the two drift apart.",
+    "",
+    "FileOS 040004 = VOS_NT_WINDOWS32, FileType 01 = VFT_APP,",
+    "FileFlagsMask 3f = VS_FFI_FILEFLAGSMASK. LangID 0409 = en-US,",
+    "CharsetID 04B0 = 1200 = Unicode; the version resource carries one string",
+    "table and it is the English one, unlike the runtime UI which is",
+    "translated. A second, Ukrainian table would need a resource compiler that",
+    "supports multiple string tables - goversioninfo does not."
+  ],
+  "FixedFileInfo": {
+    "FileVersion": {
+      "Major": 0,
+      "Minor": 0,
+      "Patch": 0,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 0,
+      "Minor": 0,
+      "Patch": 0,
+      "Build": 0
+    },
+    "FileFlagsMask": "3f",
+    "FileFlags": "00",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "Comments": "https://github.com/JastRedPanda/Nimbus",
+    "CompanyName": "JastRedPanda",
+    "FileDescription": "Nimbus - weather in the system tray",
+    "FileVersion": "",
+    "InternalName": "nimbus",
+    "LegalCopyright": "Copyright (C) 2025-2026 JastRedPanda. Licensed under GPL-3.0-or-later.",
+    "LegalTrademarks": "",
+    "OriginalFilename": "nimbus.exe",
+    "PrivateBuild": "",
+    "ProductName": "Nimbus",
+    "ProductVersion": "",
+    "SpecialBuild": ""
+  },
+  "VarFileInfo": {
+    "Translation": {
+      "LangID": "0409",
+      "CharsetID": "04B0"
+    }
+  }
+}

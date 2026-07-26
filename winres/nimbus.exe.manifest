@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for nimbus.exe.
+
+  Compiled into nimbus_windows_amd64.syso as RT_MANIFEST resource 1
+  (CREATEPROCESS_MANIFEST_RESOURCE_ID), which is the ID Windows reads when it
+  builds the process activation context. Rebuild with `make resource`.
+
+  Note: a nimbus.exe.manifest file sitting next to the .exe takes precedence
+  over this embedded copy. That is a handy way to A/B test a change, and a
+  thing to remember when a setting appears not to take effect.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1"
+          xmlns:asmv3="urn:schemas-microsoft-com:asm.v3"
+          manifestVersion="1.0">
+
+  <assemblyIdentity type="win32"
+                    name="JastRedPanda.Nimbus.Nimbus"
+                    version="1.0.0.0"
+                    processorArchitecture="*"/>
+
+  <description>Nimbus - weather in the system tray</description>
+
+  <!--
+    Bind to ComCtl32.dll version 6. Without this the loader hands the process
+    version 5 and every control draws in the Windows Classic style. Version 6
+    is not redistributable, so this is a request, not a guarantee: the OS
+    supplies it, we only opt in.
+
+    internal/ui/settings_windows.go already calls InitCommonControlsEx, which
+    is the other half of the requirement - but it passes ICC_STANDARD_CLASSES
+    alone. Per the INITCOMMONCONTROLSEX docs that flag loads "button, edit,
+    static, listbox, combobox, and scroll bar"; the font-scale slider is
+    msctls_trackbar32, which lives under ICC_BAR_CLASSES. Under comctl32 v5
+    the DLL registers everything on load and the omission never showed. If the
+    slider stops appearing once v6 is active, that flag is why:
+    ice.DwICC = win.ICC_STANDARD_CLASSES | win.ICC_BAR_CLASSES.
+
+    publicKeyToken 6595b64144ccf1df and version 6.0.0.0 are fixed values
+    defined by Windows - they identify the OS assembly, not this program, and
+    must be written exactly like this.
+  -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32"
+                        name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0"
+                        processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df"
+                        language="*"/>
+    </dependentAssembly>
+  </dependency>
+
+  <!--
+    Run with the caller's token, never ask for elevation. Nimbus writes only to
+    %APPDATA% (config uses os.UserConfigDir), so it never needs administrator
+    rights. Declaring this also turns off UAC file/registry virtualization for
+    the process, which is what we want: silent redirection of writes into
+    VirtualStore is a debugging trap, not a feature.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!--
+    Declare which Windows releases this binary was written against. Without a
+    compatibility section Windows 7 and later run the process in "Windows
+    Vista" OS context and lie to version APIs. Go 1.21 and later require
+    Windows 10 anyway; the older GUIDs are listed because Microsoft's own
+    guidance is to list every supported release, and the highest GUID the
+    running OS recognises is the one that takes effect.
+  -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10, Windows 11, Server 2016/2019/2022 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1, Server 2012 R2 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <!-- Windows 8, Server 2012 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+      <!-- Windows 7, Server 2008 R2 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+      <!-- Windows Vista, Server 2008 -->
+      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
+    </application>
+  </compatibility>
+
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <!--
+        DPI awareness: SYSTEM, deliberately, not PerMonitorV2.
+
+        Nimbus lays its Win32 windows out in hard-coded pixels - the settings
+        window is 440x700 with every child control at a literal offset, and its
+        fonts come from CreateFontIndirect with literal LOGFONT heights and from
+        GetStockObject(DEFAULT_GUI_FONT). Nothing in internal/ui reads
+        GetDpiForWindow, nothing handles WM_DPICHANGED, nothing recreates fonts.
+
+        Per-monitor-v2 hands the process a DPI that changes while it runs: every
+        window would need a WM_DPICHANGED handler that resizes itself to the
+        suggested RECT, re-lays out its children and rebuilds its fonts. Code
+        that does not do that ends up with a window sized for the old monitor
+        and controls sized for neither. Declaring PerMonitorV2 without writing
+        that code is strictly worse than not declaring it.
+
+        System awareness gives one scale factor fixed at process start, so the
+        eventual fix is a single `scale = dpi/96` multiplier applied to the
+        literals - no relayout machinery. On a second monitor at a different
+        scale Windows bitmap-stretches the window, which is exactly today's
+        behaviour, so nothing regresses.
+
+        What system awareness buys immediately: text and control edges are drawn
+        at real pixels instead of being stretched, GetSystemMetrics(SM_CXSMICON)
+        returns the true tray icon size so the ICO frame picked for the tray is
+        right, and the 700px-tall settings window stops overflowing the work
+        area on a scaled 1080p screen (unaware, it is virtualised to 1050px at
+        150% and gets clipped).
+
+        Known consequence, not yet addressed: until the layout is scaled, the
+        settings and forecast windows render physically smaller on a scaled
+        display than the surrounding desktop. Crisp and small beats blurry and
+        clipped, but it is not the end state.
+
+        Both elements are present on purpose. Windows 10 1607 and later read
+        dpiAwareness and ignore dpiAware; earlier releases do the reverse. They
+        are in different namespaces, which is why each carries its own xmlns.
+      -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">system</dpiAwareness>
+
+      <!--
+        Opt out of the MAX_PATH limit on Windows 10 1607+. Free: it only takes
+        effect when the machine also has
+        HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1,
+        and it can only ever let a path through that would otherwise have
+        failed. Relevant because the config lives under %APPDATA%, which sits
+        below a user profile path an administrator can make arbitrarily deep.
+      -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+</assembly>
