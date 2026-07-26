@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
-	"github.com/JastRedPanda/Nimbus/internal/webui"
 )
 
 //go:embed about_logo.png
@@ -36,12 +35,9 @@ var (
 // ShowAbout opens the About window and returns immediately; the window is
 // built on the GTK main loop thread.
 func showAbout(theme string) {
-	if !gtk.Ready() {
-		// No usable GTK on this machine. Degrade to the browser UI rather than
-		// leaving the menu item doing nothing at all.
-		webui.ShowAbout(theme)
-		return
-	}
+	// No GTK check here: choosing a backend is internal/gui's job, and this
+	// code only runs because the gtk3 backend was selected. A second, hidden
+	// fallback would let a forced backend quietly behave like another one.
 	if err := gtk.Invoke(func() { buildAbout(theme) }); err != nil {
 		log.Printf("about: schedule failed: %v", err)
 	}

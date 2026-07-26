@@ -5,11 +5,11 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"log"
 
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
-	"github.com/JastRedPanda/Nimbus/internal/webui"
 	"github.com/JastRedPanda/Nimbus/internal/wicons"
 )
 
@@ -39,11 +39,6 @@ var forecastWindow gtk.Window
 // single menu-dispatch loop, and a blocking 10s HTTP call there would freeze
 // Settings, About and Quit along with it.
 func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
-	if !gtk.Ready() {
-		webui.ShowForecast(lat, lon, units, lang, theme, windUnit)
-		return
-	}
-
 	// The pointer is sampled now, while the user's click is still fresh, rather
 	// than when the window is finally built: the fetch in between can take up
 	// to ten seconds, by which time the pointer may be on another monitor
@@ -57,7 +52,7 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 	go func() {
 		data, err := weather.FetchDaily(lat, lon)
 		at := <-anchor
-		gtk.Invoke(func() {
+		schedErr := gtk.Invoke(func() {
 			l := i18n.ParseLang(lang)
 			if err != nil || len(data) == 0 {
 				ensureAppIcon()
@@ -66,6 +61,11 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 			}
 			buildForecast(data, units, theme, l, at)
 		})
+		if schedErr != nil {
+			// Nothing will ever draw this. Say so rather than leaving the user
+			// clicking a menu item that silently does nothing.
+			log.Printf("forecast: cannot reach the GTK loop: %v", schedErr)
+		}
 	}()
 }
 

@@ -1,3 +1,5 @@
+//go:build !windows
+
 package ui
 
 import (
@@ -9,9 +11,13 @@ import (
 // webBackend serves the windows as HTML from a loopback HTTP server and opens
 // the user's browser at them.
 //
-// It carries no build tag: it is the one backend that works anywhere a browser
-// does, which is what makes it a usable floor under every platform. It ranks
-// below every native backend precisely because a browser tab is not a window.
+// It is the floor under the platforms whose native backend is loaded at
+// runtime and can therefore be missing - and on macOS it is still the only
+// backend there is. Windows is excluded on purpose: the Win32 backend is
+// compiled in and cannot fail to be present, so a fallback there is
+// unreachable code that costs 3.2 MB of net/http and html/template.
+//
+// It ranks below every native backend, because a browser tab is not a window.
 type webBackend struct{}
 
 func (webBackend) Name() string { return "web" }
