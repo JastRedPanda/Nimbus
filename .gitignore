@@ -2,3 +2,10 @@
 *.exe~
 bin/
 build/
+
+# Packaging output
+dist/debian/nimbus/
+dist/*.deb
+dist/rpm/BUILD/
+dist/rpm/RPMS/
+dist/rpm/SRPMS/

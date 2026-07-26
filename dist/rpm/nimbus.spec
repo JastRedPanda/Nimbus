@@ -11,15 +11,13 @@ Summary:        Weather tray app with 7-day forecast and settings GUI
 License:        GPL-3.0-or-later
 URL:            https://github.com/JastRedPanda/Nimbus
 
-BuildRequires:  gtk3-devel
-
-%if 0%{?suse_version}
-BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
-BuildRequires:  pkgconfig(gtk+-3.0)
-%endif
-
-Requires:       gtk3
-Requires:       libappindicator-gtk3%{?_isa}
+# No build dependency on GTK: the binary is pure Go and loads the library at
+# runtime with dlopen, so no headers and no pkg-config are involved.
+#
+# GTK is Recommends rather than Requires for the same reason - without it the
+# app still installs, still shows its tray icon, and opens its windows in the
+# browser instead. appindicator is gone entirely: the tray speaks D-Bus now.
+Recommends:     gtk3
 
 %description
 Nimbus displays current temperature and weather conditions in the
@@ -51,8 +49,11 @@ EOF
 
 mkdir -p %{buildroot}%{_datadir}/pixmaps
 install -m 644 build-rpm/nimbus1.png %{buildroot}%{_datadir}/pixmaps/nimbus.png
+install -m 644 build-rpm/LICENSE build-rpm/THIRD-PARTY-LICENSES .
 
 %files
+%license LICENSE
+%doc THIRD-PARTY-LICENSES
 %{_bindir}/nimbus
 %{_datadir}/applications/nimbus.desktop
 %{_datadir}/pixmaps/nimbus.png

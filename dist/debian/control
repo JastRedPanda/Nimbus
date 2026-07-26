@@ -2,7 +2,7 @@ Package: nimbus
 Version: 1.0.0
 Architecture: amd64
 Maintainer: JastRedPanda <jastredpanda@users.noreply.github.com>
-Depends: libgtk-3-0, libayatana-appindicator3-1 | libappindicator3-1
+Recommends: libgtk-3-0
 Section: utils
 Priority: optional
 Homepage: https://github.com/JastRedPanda/Nimbus

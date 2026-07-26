@@ -28,7 +28,7 @@ jobs:
         run: |
           VER="${{ github.event.inputs.tag || github.ref_name }}"
           VER="${VER#v}"
-          go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus.exe .
+          CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus.exe .
       - uses: actions/upload-artifact@v4
         with:
           name: nimbus-windows
@@ -50,7 +50,7 @@ jobs:
         run: |
           VER="${{ github.event.inputs.tag || github.ref_name }}"
           VER="${VER#v}"
-          go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
+          CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
       - name: Build .deb
         run: |
           VER="${{ github.event.inputs.tag || github.ref_name }}"
@@ -59,9 +59,11 @@ jobs:
           mkdir -p dist/debian/nimbus/usr/bin
           mkdir -p dist/debian/nimbus/usr/share/applications
           mkdir -p dist/debian/nimbus/usr/share/pixmaps
+          mkdir -p dist/debian/nimbus/usr/share/doc/nimbus
           install -m 755 nimbus dist/debian/nimbus/usr/bin/
           install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
           install -m 644 nimbus1.png dist/debian/nimbus/usr/share/pixmaps/nimbus.png
+          install -m 644 LICENSE THIRD-PARTY-LICENSES dist/debian/nimbus/usr/share/doc/nimbus/
           sed "s/^Version:.*/Version: ${VER}/" dist/debian/control > dist/debian/nimbus/DEBIAN/control
           dpkg-deb --build dist/debian/nimbus "dist/nimbus_${VER}-1_amd64.deb"
       - name: Build .rpm
@@ -69,7 +71,7 @@ jobs:
           VER="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${VER#v}"
           mkdir -p dist/rpm/BUILD/build-rpm dist/rpm/RPMS dist/rpm/SRPMS
-          cp nimbus nimbus1.png dist/rpm/BUILD/build-rpm/
+          cp nimbus nimbus1.png LICENSE THIRD-PARTY-LICENSES dist/rpm/BUILD/build-rpm/
           sed "s/^Version:.*/Version: ${VERSION}/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
           rpmbuild -bb --nodeps --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>&1 || true
           find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \; 2>/dev/null || true
