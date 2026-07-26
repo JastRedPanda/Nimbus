@@ -41,7 +41,7 @@ func MakeIcon(temp float64, code int, theme string, fontScale int) []byte {
 	_ = theme
 	s32 := render(temp, 32, fontScale)
 	s64 := render(temp, 64, fontScale)
-	return encodeICO(s32, s64)
+	return encodeIcon(s32, s64)
 }
 
 func render(temp float64, sz int, fontScale int) *image.RGBA {

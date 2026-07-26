@@ -1,4 +1,4 @@
-﻿package tray
+package tray
 
 import (
 	"fmt"
@@ -6,12 +6,12 @@ import (
 	"os/exec"
 	"runtime"
 
+	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/icons"
 	"github.com/JastRedPanda/Nimbus/internal/ui"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
-	"github.com/getlantern/systray"
 )
 
 type app struct {
@@ -25,8 +25,8 @@ type app struct {
 	mQuit     *systray.MenuItem
 }
 
-func Run(cfg *config.Config) {
-	systray.Run(func() { (&app{cfg: cfg, lang: i18n.ParseLang(cfg.Language)}).ready() }, func() {})
+func newApp(cfg *config.Config) *app {
+	return &app{cfg: cfg, lang: i18n.ParseLang(cfg.Language)}
 }
 
 func (a *app) ready() {
@@ -57,7 +57,7 @@ func (a *app) handleMenu() {
 		case <-a.mAbout.ClickedCh:
 			ui.ShowAbout(a.cfg.IconTheme)
 		case <-a.mQuit.ClickedCh:
-			systray.Quit()
+			quit()
 			return
 		}
 	}

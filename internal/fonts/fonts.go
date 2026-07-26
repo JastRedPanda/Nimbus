@@ -1,44 +1,15 @@
+// Package fonts owns the embedded Weather Icons typeface and turns its
+// codepoints into weather symbols.
+//
+// Only the Win32 backend uses it: register_windows.go hands the face to GDI and
+// forecast_windows.go draws the codepoints below. The GTK backend draws colour
+// artwork from internal/wicons instead and never touches this package.
 package fonts
 
-import (
-	_ "embed"
-	"os"
-	"path/filepath"
-	"syscall"
-
-	"github.com/lxn/win"
-)
+import _ "embed"
 
 //go:embed weathericons.ttf
 var weatherIconsTTF []byte
-
-var loaded bool
-var tempPath string
-
-func Load() bool {
-	if loaded {
-		return true
-	}
-	tempPath = filepath.Join(os.TempDir(), "nimbus-weathericons.ttf")
-	err := os.WriteFile(tempPath, weatherIconsTTF, 0644)
-	if err != nil {
-		return false
-	}
-	fn, _ := syscall.UTF16PtrFromString(tempPath)
-	ret := win.AddFontResourceEx(fn, win.FR_PRIVATE, nil)
-	loaded = ret > 0
-	return loaded
-}
-
-func Cleanup() {
-	if tempPath != "" {
-		fn, _ := syscall.UTF16PtrFromString(tempPath)
-		win.RemoveFontResourceEx(fn, win.FR_PRIVATE, nil)
-		os.Remove(tempPath)
-		tempPath = ""
-		loaded = false
-	}
-}
 
 const (
 	WiDaySunny     = "\uf00d"

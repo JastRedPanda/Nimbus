@@ -1,4 +1,4 @@
-//go:build !windows && !linux
+//go:build linux
 
 package ui
 
@@ -7,14 +7,10 @@ import (
 	"github.com/JastRedPanda/Nimbus/internal/webui"
 )
 
+// The Linux backend is being moved to GTK one window at a time. ShowAbout
+// (about_linux.go) and ShowForecast (forecast_linux.go) are already native;
+// settings still opens the browser UI.
+
 func ShowSettings(cfg *config.Config, onFontChange func(int)) *config.Config {
 	return webui.ShowSettings(cfg)
-}
-
-func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
-	webui.ShowForecast(lat, lon, units, lang, theme, windUnit)
-}
-
-func ShowAbout(theme string) {
-	webui.ShowAbout(theme)
 }
