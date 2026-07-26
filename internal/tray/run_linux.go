@@ -4,10 +4,16 @@ package tray
 
 import (
 	"log"
+	"sync"
 
 	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
+)
+
+var (
+	quitOnce sync.Once
+	quitCh   = make(chan struct{})
 )
 
 // Run owns the GTK main loop for the process and runs the tray alongside it on
@@ -21,8 +27,9 @@ func Run(cfg *config.Config) {
 	// goroutine can be migrated between them otherwise - not while blocked
 	// inside the loop, but during Init itself, which is enough to break GTK.
 	gtk.LockThread()
-	if err := gtk.Init(); err != nil {
-		log.Printf("tray: GTK unavailable, windows will use the browser UI: %v", err)
+	withGTK := gtk.Init() == nil
+	if !withGTK {
+		log.Print("tray: GTK unavailable, windows will open in the browser")
 	}
 
 	a := newApp(cfg)
@@ -35,12 +42,29 @@ func Run(cfg *config.Config) {
 	systray.SetOnTapped(func() { a.showForecast() })
 
 	start()
-	gtk.Main()
+
+	if withGTK {
+		gtk.Main()
+	} else {
+		// The tray speaks D-Bus and needs no toolkit at all, so on a machine
+		// with no GTK the icon, its menu and its tooltip still work and only
+		// the windows degrade. Something has to block here regardless: without
+		// it the process falls straight through to end() and the icon appears
+		// and vanishes.
+		<-quitCh
+	}
+
 	// Only now: tearing the tray down first would close its bus connection and
 	// run the exit callback while the loop is still dispatching.
 	end()
 }
 
-// quit ends the process by stopping the loop Run is blocked on. systray.Quit
+// quit ends the process by releasing whatever Run is blocked on. systray.Quit
 // alone is a no-op under an external loop - it closes a channel nobody reads.
-func quit() { gtk.Invoke(gtk.MainQuit) }
+func quit() {
+	if gtk.Ready() {
+		gtk.Invoke(gtk.MainQuit)
+		return
+	}
+	quitOnce.Do(func() { close(quitCh) })
+}
