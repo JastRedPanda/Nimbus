@@ -246,6 +246,19 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 	subText := syscall.StringToUTF16("Мультиплатформний інформер погоди.")
 	sr := &win.RECT{Left: 20, Top: subY, Right: cw - 20, Bottom: subY + 40}
 	win.DrawTextEx(hdc, &subText[0], -1, sr, win.DT_CENTER|win.DT_WORDBREAK, nil)
+
+	// The version sits below the subtitle in a muted grey that reads on both
+	// the light and the dark background this window can have.
+	verY := subY + 44
+	if d.dark {
+		win.SetTextColor(hdc, win.COLORREF(0x00909090))
+	} else {
+		win.SetTextColor(hdc, win.COLORREF(0x00787878))
+	}
+	verText := syscall.StringToUTF16(versionLine())
+	vr := &win.RECT{Left: 20, Top: verY, Right: cw - 20, Bottom: verY + 20}
+	win.DrawTextEx(hdc, &verText[0], -1, vr, win.DT_CENTER|win.DT_SINGLELINE, nil)
+
 	if subFont != 0 {
 		win.DeleteObject(win.HGDIOBJ(subFont))
 	}

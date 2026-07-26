@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"image"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
@@ -67,6 +68,11 @@ func buildAbout(theme string) {
 	}
 	gtk.PackStart(box, gtk.NewLabel(`<span size="xx-large" weight="bold">Nimbus</span>`), false, false, 0)
 	gtk.PackStart(box, gtk.NewText(aboutSubtitle), false, false, 0)
+	// Muted with an explicit grey rather than a theme colour: this window uses
+	// the desktop theme, and mid-grey is legible against both a light and a
+	// dark one.
+	gtk.PackStart(box, gtk.NewLabel(`<span size="small" foreground="#888888">`+
+		escapeMarkup(versionLine())+`</span>`), false, false, 0)
 
 	win.ShowAll()
 	aboutWindow = win
@@ -78,4 +84,9 @@ func buildAbout(theme string) {
 func aboutLogo() *image.NRGBA {
 	logoOnce.Do(func() { logoRGBA = decodeRGBA(aboutLogoPNG) })
 	return logoRGBA
+}
+
+// escapeMarkup makes a literal string safe to embed in Pango markup.
+func escapeMarkup(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
