@@ -14,10 +14,7 @@ type gtkBackend struct{}
 func (gtkBackend) Name() string { return "gtk3" }
 
 func (gtkBackend) Settings(cfg *config.Config, onFontScale func(int)) *config.Config {
-	// Not ported yet: the settings form is still the browser's. Delegating to
-	// the web backend keeps the window working while the rest of this backend
-	// is native, rather than losing the feature during the port.
-	return webBackend{}.Settings(cfg, onFontScale)
+	return showSettings(cfg, onFontScale)
 }
 
 func (gtkBackend) Forecast(req gui.Forecast) {

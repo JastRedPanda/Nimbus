@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"math"
 	"sync"
 
 	"github.com/ebitengine/purego"
@@ -33,6 +34,10 @@ const (
 	AlignStart  = 1
 	AlignEnd    = 2
 	AlignCenter = 3
+
+	// GtkPolicyType, for scrolled windows.
+	policyAutomatic = 1 // GTK_POLICY_AUTOMATIC
+	policyNever     = 2 // GTK_POLICY_NEVER
 
 	colorspaceRGB = 0 // GDK_COLORSPACE_RGB
 	typeBoolean   = 5 << 2
@@ -149,10 +154,37 @@ var (
 	valueUnset    func(*byte)
 	objUnref      func(uintptr)
 
-	idleAdd    func(uintptr, uintptr) uint32
-	listAppend func(uintptr, uintptr) uintptr
+	idleAdd     func(uintptr, uintptr) uint32
+	listAppend  func(uintptr, uintptr) uintptr
+	listForeach func(uintptr, uintptr, uintptr)
+	listFree    func(uintptr)
 
 	pixbufFromData func(data *byte, cs, alpha, bps, w, h, stride int32, destroy, destroyData uintptr) uintptr
+
+	// The settings form. Everything above this point serves a window Nimbus
+	// only ever writes to; these are the widgets it also has to read back.
+	entryNew         func() uintptr
+	entrySetText     func(uintptr, string)
+	entryGetText     func(uintptr) string
+	radioNewLabel    func(uintptr, string) uintptr
+	radioGetGroup    func(uintptr) uintptr
+	toggleSetActive  func(uintptr, int32)
+	toggleGetActive  func(uintptr) int32
+	scaleNewRange    func(int32, float64, float64, float64) uintptr
+	scaleDrawValue   func(uintptr, int32)
+	rangeRoundDigits func(uintptr, int32)
+	rangeGetValue    func(uintptr) float64
+	rangeSetValue    func(uintptr, float64)
+	comboTextNew     func() uintptr
+	comboTextAppend  func(uintptr, string)
+	comboSetActive   func(uintptr, int32)
+	comboGetActive   func(uintptr) int32
+	scrolledNew      func(uintptr, uintptr) uintptr
+	scrolledPolicy   func(uintptr, int32, int32)
+	scrolledMinH     func(uintptr, int32)
+	frameNew         func(string) uintptr
+	widgetSensitive  func(uintptr, int32)
+	containerChild   func(uintptr) uintptr
 )
 
 var (
@@ -267,6 +299,38 @@ func load() {
 	purego.RegisterLibFunc(&widgetScale, gtk, "gtk_widget_get_scale_factor")
 	purego.RegisterLibFunc(&imageFromSurf, gtk, "gtk_image_new_from_surface")
 
+	// The settings form's widgets.
+	//
+	// gtk_entry_get_text is the only binding in this package that returns a
+	// string. purego copies the const gchar* into a Go string at the NUL, so the
+	// UTF-8 GTK stores arrives byte for byte and nothing here owns the buffer.
+	//
+	// gtk_range_* rather than gtk_scale_*: value and rounding live on GtkRange,
+	// which GtkScale derives from, and binding the base class is what lets one
+	// pair of accessors serve any range widget.
+	purego.RegisterLibFunc(&entryNew, gtk, "gtk_entry_new")
+	purego.RegisterLibFunc(&entrySetText, gtk, "gtk_entry_set_text")
+	purego.RegisterLibFunc(&entryGetText, gtk, "gtk_entry_get_text")
+	purego.RegisterLibFunc(&radioNewLabel, gtk, "gtk_radio_button_new_with_label")
+	purego.RegisterLibFunc(&radioGetGroup, gtk, "gtk_radio_button_get_group")
+	purego.RegisterLibFunc(&toggleSetActive, gtk, "gtk_toggle_button_set_active")
+	purego.RegisterLibFunc(&toggleGetActive, gtk, "gtk_toggle_button_get_active")
+	purego.RegisterLibFunc(&scaleNewRange, gtk, "gtk_scale_new_with_range")
+	purego.RegisterLibFunc(&scaleDrawValue, gtk, "gtk_scale_set_draw_value")
+	purego.RegisterLibFunc(&rangeRoundDigits, gtk, "gtk_range_set_round_digits")
+	purego.RegisterLibFunc(&rangeGetValue, gtk, "gtk_range_get_value")
+	purego.RegisterLibFunc(&rangeSetValue, gtk, "gtk_range_set_value")
+	purego.RegisterLibFunc(&comboTextNew, gtk, "gtk_combo_box_text_new")
+	purego.RegisterLibFunc(&comboTextAppend, gtk, "gtk_combo_box_text_append_text")
+	purego.RegisterLibFunc(&comboSetActive, gtk, "gtk_combo_box_set_active")
+	purego.RegisterLibFunc(&comboGetActive, gtk, "gtk_combo_box_get_active")
+	purego.RegisterLibFunc(&scrolledNew, gtk, "gtk_scrolled_window_new")
+	purego.RegisterLibFunc(&scrolledPolicy, gtk, "gtk_scrolled_window_set_policy")
+	purego.RegisterLibFunc(&scrolledMinH, gtk, "gtk_scrolled_window_set_min_content_height")
+	purego.RegisterLibFunc(&frameNew, gtk, "gtk_frame_new")
+	purego.RegisterLibFunc(&widgetSensitive, gtk, "gtk_widget_set_sensitive")
+	purego.RegisterLibFunc(&containerChild, gtk, "gtk_container_get_children")
+
 	// These three live in libgdk-3.so.0 and libcairo.so.2, not in libgtk-3, and
 	// are still resolved through the libgtk-3 handle: dlsym searches the
 	// library's own dependency chain, and GTK3 links both hard. Verified with
@@ -305,6 +369,8 @@ func load() {
 
 	purego.RegisterLibFunc(&idleAdd, glib, "g_idle_add")
 	purego.RegisterLibFunc(&listAppend, glib, "g_list_append")
+	purego.RegisterLibFunc(&listForeach, glib, "g_list_foreach")
+	purego.RegisterLibFunc(&listFree, glib, "g_list_free")
 
 	purego.RegisterLibFunc(&pixbufFromData, pixbuf, "gdk_pixbuf_new_from_data")
 
@@ -413,6 +479,26 @@ func ConnectOnce(obj uintptr, signal string, fn func()) {
 		cbMu.Unlock()
 	})
 	signalConnect(obj, signal, voidTrampoline, id, 0, 0)
+}
+
+// ConnectScoped is Connect for a widget that does not live as long as the
+// window holding it: a row of the city-search list, which is thrown away and
+// rebuilt on every lookup. It releases its registration when obj is destroyed,
+// so a session's worth of searches does not leave a closure per result behind
+// for the rest of the process.
+//
+// It costs no extra trampoline - the release is itself a ConnectOnce on
+// "destroy", and that entry deletes itself when it fires. Use plain Connect for
+// anything that outlives the widget tree it is built into; the bookkeeping here
+// is only worth it for widgets created in a loop.
+func ConnectScoped(obj uintptr, signal string, fn func()) {
+	id := register(voidFns, fn)
+	signalConnect(obj, signal, voidTrampoline, id, 0, 0)
+	ConnectOnce(obj, "destroy", func() {
+		cbMu.Lock()
+		delete(voidFns, id)
+		cbMu.Unlock()
+	})
 }
 
 const preferDarkProp = "gtk-application-prefer-dark-theme"
@@ -615,6 +701,27 @@ func NewMarkupCell(markup string, align int) uintptr {
 	widgetHalign(l, int32(align))
 	widgetHexpand(l, 1)
 	return l
+}
+
+// SetLabel replaces a label's literal text, nothing in it treated as markup.
+// The forecast builds every label once, but a form does not: the readout beside
+// the font-scale slider has to follow the thumb, so its text cannot be baked in
+// when the window is built.
+func SetLabel(label uintptr, text string) {
+	if label == 0 {
+		return
+	}
+	labelText(label, text)
+}
+
+// ShowAll makes a widget and everything under it visible. A window that is
+// already on screen does not show children added afterwards - a fresh set of
+// search result rows is invisible until this is called on the box holding them.
+func ShowAll(widget uintptr) {
+	if widget == 0 {
+		return
+	}
+	widgetShowAll(widget)
 }
 
 // SetVExpand lets a widget claim vertical slack, which spreads table rows over
@@ -997,3 +1104,268 @@ func WorkAreaAt(x, y int) (Rect, bool) {
 	}
 	return Rect{X: int(r[0]), Y: int(r[1]), W: int(r[2]), H: int(r[3])}, true
 }
+
+// SetSensitive greys a widget out and stops it reacting. It is how Search says
+// a lookup is already in flight, instead of letting a second click start
+// another one over the top of it.
+func SetSensitive(widget uintptr, on bool) {
+	if widget == 0 {
+		return
+	}
+	widgetSensitive(widget, b2i(on))
+}
+
+// SetHExpand lets a widget claim horizontal slack, the mirror of SetVExpand. An
+// entry has a modest natural width, so without this it sits at that width with
+// the rest of its grid column empty beside it.
+func SetHExpand(widget uintptr) {
+	if widget == 0 {
+		return
+	}
+	widgetHexpand(widget, 1)
+}
+
+// NewFrame groups child inside a titled border - the GTK spelling of the group
+// boxes the Windows settings dialog draws around each cluster of options, and
+// of the fieldsets the browser fallback uses. Grouping this way rather than
+// with NewHSeparator keeps the label attached to what it labels, so the form
+// still reads correctly when GTK reflows it.
+func NewFrame(title string, child uintptr) uintptr {
+	f := frameNew(title)
+	if child != 0 {
+		containerAdd(f, child)
+	}
+	return f
+}
+
+// NewScrolled puts child in a viewport that scrolls vertically and is at least
+// minHeight tall.
+//
+// Horizontal scrolling is off deliberately. With NEVER, GTK asks for the width
+// the widest row needs and the window is sized to fit its content; with
+// AUTOMATIC a long city name would instead hide behind a scrollbar the user has
+// to discover. The minimum content height does the other half of the job: it
+// stops the list collapsing to nothing while it is empty, and stops twenty
+// results from growing the window past the screen.
+//
+// A GtkBox is not scrollable, and gtk_container_add wraps such a child in the
+// GtkViewport it needs. That has been automatic since GTK 3.8; this package
+// needs a far newer GTK 3 than that for other reasons.
+func NewScrolled(child uintptr, minHeight int) uintptr {
+	sw := scrolledNew(0, 0)
+	scrolledPolicy(sw, policyNever, policyAutomatic)
+	scrolledMinH(sw, int32(minHeight))
+	if child != 0 {
+		containerAdd(sw, child)
+	}
+	return sw
+}
+
+// NewListRow creates one row of a pick-list: a full-width button that runs fn
+// when it is clicked or activated from the keyboard.
+//
+// The rows are buttons in a plain GtkBox rather than a GtkListBox, and the
+// reason is the callback budget. "clicked" is void(GtkButton*, gpointer) and
+// rides the two-argument void trampoline this package already owns, whereas
+// GtkListBox's row-selected is void(GtkListBox*, GtkListBoxRow*, gpointer) and
+// matches neither existing trampoline - it would cost a fourth NewCallback,
+// permanently, for one signal. Buttons also report the user's intent more
+// precisely: row-selected fires again with a NULL row when the selection is
+// cleared and once more each time the list is repopulated, so a search that
+// returns results would look like a pick nobody made.
+//
+// The handler is scoped to the row because a results list is rebuilt on every
+// search - see ConnectScoped.
+func NewListRow(label string, fn func()) uintptr {
+	b := buttonNew(label)
+	ConnectScoped(b, "clicked", fn)
+	return b
+}
+
+// ClearContainer destroys every child of a container, which is how the results
+// list is emptied before the next search fills it.
+//
+// gtk_container_get_children hands back a list the caller owns even though the
+// widgets in it are only borrowed, so the list - and just the list - is freed
+// here. Destroying a child mutates the container's own list and not this copy,
+// which is what makes it safe to walk one while destroying the other.
+//
+// gtk_widget_destroy is handed to g_list_foreach as a bare GFunc, the same idiom
+// ShowError uses to close a dialog: GFunc passes a second gpointer that
+// gtk_widget_destroy never reads, and an ignored extra argument costs nothing on
+// the ABIs Nimbus builds for. It keeps the walk inside GLib, so clearing a list
+// spends no Go callback at all.
+func ClearContainer(container uintptr) {
+	if container == 0 {
+		return
+	}
+	children := containerChild(container)
+	if children == 0 {
+		return
+	}
+	listForeach(children, destroyAddr, 0)
+	listFree(children)
+}
+
+// Entry is a GtkEntry: one line of editable text. All methods must be called on
+// the GTK thread.
+type Entry uintptr
+
+// NewEntry creates a text entry holding text.
+//
+// Enter inside the entry emits "activate", which carries nothing beyond the
+// widget itself and so connects with plain Connect - that is how the city field
+// starts a search without a detour through the Search button.
+func NewEntry(text string) Entry {
+	e := entryNew()
+	entrySetText(e, text)
+	return Entry(e)
+}
+
+// Text reads the entry back. GTK stores UTF-8 and owns the buffer it returns;
+// purego copies it to the terminating NUL, so the bytes arrive exactly as the
+// user typed them - Ukrainian, apostrophes and all - and nothing here may free
+// it.
+func (e Entry) Text() string { return entryGetText(uintptr(e)) }
+
+// SetText replaces the entry's contents, which is what filling the city, latitude
+// and longitude fields from a picked search result amounts to.
+func (e Entry) SetText(s string) { entrySetText(uintptr(e), s) }
+
+// SetActive drives any GtkToggleButton - a check button, or one radio button of
+// a group. Setting a radio button clears whichever of its group was set before.
+func SetActive(toggle uintptr, on bool) {
+	if toggle == 0 {
+		return
+	}
+	toggleSetActive(toggle, b2i(on))
+}
+
+// IsActive reports whether a GtkToggleButton is pressed in.
+func IsActive(toggle uintptr) bool {
+	return toggle != 0 && toggleGetActive(toggle) != 0
+}
+
+// RadioGroup is one set of mutually exclusive radio buttons, in the order their
+// labels were given. It is a slice so a caller can range over it and pack the
+// buttons into whatever layout the form wants; a horizontal row is only the
+// most common one.
+type RadioGroup []uintptr
+
+// NewRadioGroup builds a radio button per label, all in one group, and selects
+// the active-th.
+//
+// GTK3 threads a group through the buttons themselves instead of through a
+// container: each button is created with the group its predecessor already
+// belongs to, and NULL starts a fresh one. gtk_radio_button_get_group returns
+// that group as a GSList which GTK owns and rewrites as members join - it must
+// never be freed, and it is in the REVERSE of creation order, which is why the
+// caller's index is answered from this slice and never from the list itself.
+//
+// The first button of a group is active from the moment it exists, so a group
+// that should open on any other entry has to say so; an out-of-range index
+// leaves that default in place rather than panicking, which is what a config
+// file holding a value this build no longer offers should do.
+//
+// Note for anyone connecting "toggled": it fires twice per change, once for the
+// button going off and once for the one coming on, so a handler has to consult
+// IsActive rather than assume it was called about a selection.
+func NewRadioGroup(labels []string, active int) RadioGroup {
+	g := make(RadioGroup, 0, len(labels))
+	var group uintptr // NULL: the first button starts a new group
+	for _, label := range labels {
+		b := radioNewLabel(group, label)
+		group = radioGetGroup(b)
+		g = append(g, b)
+	}
+	g.SetActive(active)
+	return g
+}
+
+// Active reports which button is selected, or -1 in the impossible case that
+// none is.
+func (g RadioGroup) Active() int {
+	for i, b := range g {
+		if toggleGetActive(b) != 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+// SetActive selects the i-th button; an index outside the group is ignored.
+func (g RadioGroup) SetActive(i int) {
+	if i < 0 || i >= len(g) {
+		return
+	}
+	toggleSetActive(g[i], 1)
+}
+
+// Slider is a GtkScale over an integer range. All methods must be called on the
+// GTK thread.
+type Slider uintptr
+
+// NewSlider creates a horizontal slider stepping by one over min..max.
+//
+// GTK keeps the position as a double, and two calls are what make the control
+// behave like the integer it represents. The scale draws no number of its own,
+// because "47" is not what the user should read where Nimbus means "47%" - the
+// caller owns that label. Turning the number off is also what breaks GTK's
+// rounding: gtk_scale_set_digits only forwards to the range while draw-value is
+// set, so round-digits is set directly instead. Measured on this machine, a
+// thumb dragged four pixels reports 42.340659, 43.156593, 43.972527, 44.788462
+// with digits alone - the same values as with no rounding call at all - and 43,
+// 44, 45 once round-digits is set.
+func NewSlider(min, max, value int) Slider {
+	s := scaleNewRange(OrientationHorizontal, float64(min), float64(max), 1)
+	scaleDrawValue(s, 0)
+	rangeRoundDigits(s, 0)
+	rangeSetValue(s, float64(value))
+	return Slider(s)
+}
+
+// Value reports the slider position. It rounds rather than truncates: the
+// adjustment underneath is floating point whatever round-digits says, and
+// truncation would turn a 47 that arrived as 46.999999 into 46.
+func (s Slider) Value() int { return int(math.Round(rangeGetValue(uintptr(s)))) }
+
+// SetValue moves the thumb. It emits value-changed like a drag does, so a
+// handler installed with OnChange will see it - which is worth knowing before
+// calling this from inside one.
+func (s Slider) SetValue(v int) { rangeSetValue(uintptr(s), float64(v)) }
+
+// OnChange runs fn with the new value every time the slider moves, including
+// while the thumb is still held. That is the point of it: dragging the font
+// scale regenerates the tray icon live, so the user sees the size they are
+// choosing before anything is saved.
+//
+// GTK emits value-changed for every integer the thumb crosses, so fn must be
+// cheap or must coalesce its own work. The signal is void(GtkRange*, gpointer)
+// and rides the existing void trampoline, costing no part of the NewCallback
+// budget.
+func (s Slider) OnChange(fn func(value int)) {
+	Connect(uintptr(s), "value-changed", func() { fn(s.Value()) })
+}
+
+// Combo is a GtkComboBoxText: a dropdown of plain strings addressed by index.
+// All methods must be called on the GTK thread.
+type Combo uintptr
+
+// NewCombo creates a dropdown holding items, showing the active-th.
+func NewCombo(items []string, active int) Combo {
+	c := comboTextNew()
+	for _, item := range items {
+		comboTextAppend(c, item)
+	}
+	comboSetActive(c, int32(active))
+	return Combo(c)
+}
+
+// Active reports the selected index, or -1 when nothing is selected - which is
+// what GTK answers for an empty dropdown and what an out-of-range SetActive
+// leaves behind, so a caller mapping the index back to its own table must check
+// the range rather than trust it.
+func (c Combo) Active() int { return int(comboGetActive(uintptr(c))) }
+
+// SetActive selects the i-th entry; -1 clears the selection.
+func (c Combo) SetActive(i int) { comboSetActive(uintptr(c), int32(i)) }
