@@ -112,6 +112,7 @@ var (
 	gridColSpace  func(uintptr, uint32)
 	separatorNew  func(int32) uintptr
 	widgetHalign  func(uintptr, int32)
+	widgetSizeReq func(uintptr, int32, int32)
 	widgetValign  func(uintptr, int32)
 	widgetHexpand func(uintptr, int32)
 	widgetVexpand func(uintptr, int32)
@@ -298,6 +299,7 @@ func load() {
 	purego.RegisterLibFunc(&gridColSpace, gtk, "gtk_grid_set_column_spacing")
 	purego.RegisterLibFunc(&separatorNew, gtk, "gtk_separator_new")
 	purego.RegisterLibFunc(&widgetHalign, gtk, "gtk_widget_set_halign")
+	purego.RegisterLibFunc(&widgetSizeReq, gtk, "gtk_widget_set_size_request")
 	purego.RegisterLibFunc(&widgetValign, gtk, "gtk_widget_set_valign")
 	purego.RegisterLibFunc(&widgetHexpand, gtk, "gtk_widget_set_hexpand")
 	purego.RegisterLibFunc(&widgetVexpand, gtk, "gtk_widget_set_vexpand")
@@ -860,6 +862,21 @@ func SetHAlign(widget uintptr, align int) {
 		return
 	}
 	widgetHalign(widget, int32(align))
+}
+
+// SetSizeRequest asks for a minimum size in logical pixels. Pass -1 for a
+// dimension that should keep its natural size.
+//
+// It is a MINIMUM, not a size: GTK gives a widget more when its container has
+// room and the widget is set to expand, and never less than the content needs, so
+// a request narrower than the label will simply be ignored. That makes it the
+// right tool for "this button should be a third of the window wide" and the wrong
+// one for pinning a widget to an exact size.
+func SetSizeRequest(widget uintptr, w, h int) {
+	if widget == 0 {
+		return
+	}
+	widgetSizeReq(widget, int32(w), int32(h))
 }
 
 // SetVAlign overrides a widget's vertical alignment. A column of labels packed

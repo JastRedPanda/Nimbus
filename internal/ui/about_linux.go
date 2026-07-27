@@ -21,6 +21,10 @@ const (
 	// leaving the dead space a fixed height would.
 	aboutHeight   = -1
 	aboutSubtitle = "Мультиплатформний інформер погоди."
+
+	// The OK button is a third of the window wide and centred. Win32 carries the
+	// same fraction of the same 320 units in aboutBtnW, so the two windows agree.
+	aboutBtnW = aboutWidth / 3
 )
 
 var (
@@ -56,6 +60,9 @@ func buildAbout(theme string) {
 	win := gtk.NewWindow("About Nimbus", aboutWidth, aboutHeight, false)
 	win.SetBorder(20)
 	win.OnDestroy(func() { aboutWindow = 0 })
+	// Parity with the Win32 About box, which has answered Escape since it was
+	// written while this one quietly did not.
+	win.OnEscape(func() { win.Destroy() })
 
 	box := gtk.NewVBox(12)
 	win.Add(box)
@@ -73,6 +80,26 @@ func buildAbout(theme string) {
 	// dark one.
 	gtk.PackStart(box, gtk.NewLabel(`<span size="small" foreground="#888888">`+
 		escapeMarkup(versionLine())+`</span>`), false, false, 0)
+
+	// An explicit way out, because Escape and the title bar are not obvious ones
+	// and this window has nothing else to click. halign does the centring; no
+	// spacer widget for the desktop theme to state a colour and a padding on.
+	//
+	// Packed WITHOUT expand and fill, unlike the visually similar closeRow in
+	// forecast_linux.go. That one is a horizontal box, where those flags are what
+	// give the child the full row width for halign to work against. This is a
+	// vertical box, so the same flags mean "take all the spare height and fill
+	// it": the button would stretch into a slab down the side of the window the
+	// moment anything gave the box height to spare. Harmless today, because the
+	// window takes its natural height and cannot be resized - which is exactly the
+	// kind of accident that survives until someone sets a height.
+	//
+	// "OK" is spelled the same in both languages this program speaks, so it needs
+	// no entry in internal/i18n - the subtitle above is likewise literal.
+	ok := gtk.NewButton("OK", func() { win.Destroy() })
+	gtk.SetHAlign(ok, gtk.AlignCenter)
+	gtk.SetSizeRequest(ok, aboutBtnW, -1)
+	gtk.PackStart(box, ok, false, false, 0)
 
 	win.ShowAll()
 	aboutWindow = win

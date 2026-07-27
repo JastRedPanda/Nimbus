@@ -22,8 +22,13 @@ var aboutLogoPNG []byte
 
 const (
 	aboutClassName = "NimbusAboutClass"
-	aboutStyle     = win.WS_CAPTION | win.WS_SYSMENU
-	aboutSubtitle  = "Мультиплатформний інформер погоди."
+	// WS_CLIPCHILDREN because this window fills its own background in both
+	// WM_ERASEBKGND and WM_PAINT, and now has a child: without it every repaint
+	// paints over the button first and the button repaints on top, which flashes.
+	// It does not affect AdjustWindowRect, so frameOverhead and layoutDPI are
+	// unchanged by it.
+	aboutStyle    = win.WS_CAPTION | win.WS_SYSMENU | win.WS_CLIPCHILDREN
+	aboutSubtitle = "Мультиплатформний інформер погоди."
 
 	// Layout in 96-DPI units, top to bottom: padding, logo, title, subtitle,
 	// version, padding. Everything goes through dp() on its way to Win32, so
@@ -36,6 +41,19 @@ const (
 	aboutSubtitleH = 40
 	aboutVerGap    = 44
 	aboutVerH      = 20
+	// The OK button, bottom right. Its own gap above it rather than reusing
+	// aboutPad: the version line is small grey text and needs more air between it
+	// and a control than the window edge needs.
+	aboutBtnGap = 18
+	// A third of the window wide, the same fraction about_linux.go asks GTK for.
+	aboutBtnW = aboutContentW / 3
+	aboutBtnH = 26
+
+	// ID_ABOUT_OK is this window's only control. The settings dialog's ids run to
+	// 123 in its own window and cannot collide - WM_COMMAND is delivered to the
+	// parent, and these are different parents - but the numbering is kept clear of
+	// them anyway so a future shared helper cannot be caught out.
+	ID_ABOUT_OK = 200
 
 	// Character heights, again at 96 DPI.
 	aboutTitlePx = 24
@@ -64,6 +82,11 @@ var (
 )
 
 type aboutDlg struct {
+	// ok is the only control this window has. It is a field because the focus is
+	// put on it once the window is up, and because release has to free the font it
+	// was given.
+	ok win.HWND
+
 	hwnd win.HWND
 	inst win.HINSTANCE
 	dark bool
@@ -72,6 +95,11 @@ type aboutDlg struct {
 	bgBrush   win.HBRUSH
 	titleFont win.HFONT
 	bodyFont  win.HFONT
+	// btnFont is the shell's 9pt face, the same uiFont every control in the
+	// settings window gets. bodyFont is a 15px cell meant for painted body text,
+	// and a button wearing it has a visibly larger caption than every other button
+	// in the program.
+	btnFont win.HFONT
 }
 
 // aboutDialogs maps a window to its dialog, for the same reason
@@ -171,11 +199,50 @@ func (d *aboutDlg) run() {
 	ow, oh := frameOverhead(aboutStyle)
 	centreOn(d.hwnd, scaleDPI(aboutContentW, d.dpi)+ow, scaleDPI(contentH, d.dpi)+oh)
 
+	// After centreOn, so the client size the button is placed against is final.
+	//
+	// Deliberately NOT run through unthemeForDark, and there is no
+	// WM_CTLCOLORBTN case for it either. A BS_PUSHBUTTON ignores the brush its
+	// parent returns - Microsoft documents that push buttons "are always drawn
+	// with the default system colors" and that the returned text colour reaches
+	// only the focus rectangle - so neither would colour anything. What
+	// unthemeForDark WOULD do is drop this one button to classic grey chrome next
+	// to the settings window's themed ones. Its own reason for existing is a group
+	// box, a radio or a checkbox drawing over the PARENT's brush, which a push
+	// button never does; a themed push button paints its own face and is legible
+	// on a dark window as it stands.
+	var crc win.RECT
+	win.GetClientRect(d.hwnd, &crc)
+	bw, bh := int(d.dp(aboutBtnW)), int(d.dp(aboutBtnH))
+	pad := int(d.dp(aboutPad))
+	d.ok = createButton(d.hwnd, "OK",
+		(int(crc.Right)-bw)/2, int(crc.Bottom)-pad-bh, bw, bh, ID_ABOUT_OK)
+	if d.ok == 0 {
+		// Worth a line: the window still works through Escape, Enter and the title
+		// bar, but the button the user was told about is simply absent.
+		log.Print("about: could not create the OK button; Escape and the title bar still close the window")
+	} else {
+		d.btnFont = uiFont(d.dpi)
+		if d.btnFont != 0 {
+			// Guarded: WM_SETFONT with a null handle selects SYSTEM_FONT, which is
+			// the Windows 3.1 bitmap face this is here to avoid in the first place.
+			win.SendMessage(d.ok, win.WM_SETFONT, uintptr(d.btnFont), 1)
+		}
+	}
+
 	if d.dark {
 		setDarkTitleBar(d.hwnd, true)
 	}
 	win.ShowWindow(d.hwnd, win.SW_SHOW)
 	win.UpdateWindow(d.hwnd)
+	if d.ok != 0 {
+		// After ShowWindow, not before. This class runs DefWindowProc, not
+		// DefDlgProc, so nothing restores the focus to a child when the window is
+		// activated - a SetFocus issued while the window was still hidden would be
+		// undone by the activation that ShowWindow triggers, leaving the button
+		// without focus and the space bar doing nothing.
+		win.SetFocus(d.ok)
+	}
 
 	var msg win.MSG
 	for {
@@ -186,16 +253,28 @@ func (d *aboutDlg) run() {
 			log.Print("about: GetMessage failed")
 			return
 		}
-		// Escape closes an About box. Nothing else here reads the keyboard:
-		// this window has no controls at all, which is also why it does not
-		// call IsDialogMessage - there is nothing to navigate between, and a
-		// window with no children is not what that function is for.
-		if msg.Message == win.WM_KEYDOWN && msg.WParam == win.VK_ESCAPE && msg.HWnd == d.hwnd {
+		// The same two steps, in the same order, as the settings window: catch
+		// Escape by hand, then let IsDialogMessage have everything else.
+		//
+		// Escape is caught here because the Escape-means-cancel rule lives in the
+		// real dialog manager inside DefDlgProc, and this class runs
+		// DefWindowProc. IsDialogMessage supplies the rest of the dialog keyboard
+		// interface to a plain window that owns controls - Tab, the space bar on
+		// the focused button, mnemonics - which is what makes the OK button
+		// reachable without a mouse. WM_COMMAND answers IDOK and IDCANCEL as well
+		// as the button's own id, so Enter closes the window whichever of them it
+		// arrives as.
+		//
+		// The child test claims the keystroke whether it landed on the window or on
+		// the button.
+		if msg.Message == win.WM_KEYDOWN && msg.WParam == win.VK_ESCAPE && d.owns(msg.HWnd) {
 			win.DestroyWindow(d.hwnd)
 			continue
 		}
-		win.TranslateMessage(&msg)
-		win.DispatchMessage(&msg)
+		if !win.IsDialogMessage(d.hwnd, &msg) {
+			win.TranslateMessage(&msg)
+			win.DispatchMessage(&msg)
+		}
 	}
 }
 
@@ -205,11 +284,17 @@ func aboutContentH() int {
 	if aboutLogoBitmap != 0 {
 		h += int(aboutLogoH) + aboutLogoGap
 	}
-	return h + aboutTitleGap + aboutVerGap + aboutVerH + aboutPad
+	return h + aboutTitleGap + aboutVerGap + aboutVerH + aboutBtnGap + aboutBtnH + aboutPad
 }
 
 // dp scales a layout unit to device pixels.
 func (d *aboutDlg) dp(v int) int32 { return scaleDPI(v, d.dpi) }
+
+// owns reports whether hwnd is this window or one of its children, which is what
+// decides whether a keystroke on the message queue belongs to this About box.
+func (d *aboutDlg) owns(hwnd win.HWND) bool {
+	return hwnd == d.hwnd || win.IsChild(d.hwnd, hwnd)
+}
 
 // aboutFont builds a font whose character height is px device pixels, in the
 // face the shell draws its own text with.
@@ -293,6 +378,16 @@ func aboutWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 			return brush
 		}
 		return win.DefWindowProc(hwnd, msg, wParam, lParam)
+	case win.WM_COMMAND:
+		// The only control here is OK, and it does what the title bar's close
+		// button and Escape do. IDOK and IDCANCEL are answered too: they are how
+		// the dialog keyboard interface reports Enter, and a window that ignored
+		// them would take Enter as a keystroke that does nothing.
+		switch win.LOWORD(uint32(wParam)) {
+		case ID_ABOUT_OK, win.IDOK, win.IDCANCEL:
+			win.DestroyWindow(hwnd)
+			return 0
+		}
 	case win.WM_PAINT:
 		dlg.onPaint(hwnd)
 		return 0
@@ -315,6 +410,10 @@ func (d *aboutDlg) release() {
 	if d.titleFont != 0 {
 		win.DeleteObject(win.HGDIOBJ(d.titleFont))
 		d.titleFont = 0
+	}
+	if d.btnFont != 0 {
+		win.DeleteObject(win.HGDIOBJ(d.btnFont))
+		d.btnFont = 0
 	}
 	if d.bodyFont != 0 {
 		win.DeleteObject(win.HGDIOBJ(d.bodyFont))
