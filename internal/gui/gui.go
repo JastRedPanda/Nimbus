@@ -44,7 +44,59 @@ type Forecast struct {
 	Lang     string // "en" | "uk"
 	Theme    string // "auto" | "dark" | "light"
 	WindUnit string // "ms" | "kmh"
+
+	// Pinned reports the dismissal policy - Escape and focus loss are ignored
+	// while it is true - and is a function rather than a bool so that the panel
+	// asks again at the moment of each event. A bool captured when the panel
+	// opened would mean unchecking the box in settings only took effect on the
+	// next panel, not on the one the user is looking at.
+	//
+	// May be nil, and nil means not pinned: the behaviour before the option
+	// existed.
+	Pinned func() bool
+
+	// At is where to put the panel. nil means anchor it at the corner nearest
+	// the pointer, which is what a panel the user has never moved does - see
+	// OnMove for what "moved" has to mean before a position is remembered at all.
+	//
+	// Deciding this is the caller's job, not the panel's: the caller is the only
+	// one that knows whether a remembered position should be honoured at all.
+	At *Point
+
+	// OnMove reports the panel's final position as it closes, so a caller that
+	// wants to remember it can. May be nil.
+	//
+	// It is called ONLY IF the panel actually changed position under the user's
+	// hand during this showing, which takes BOTH of two things: a press was handed
+	// to the window manager's move loop at least once, and the window's position at
+	// close differs from its position at that first handoff.
+	//
+	// Neither half is enough. Without the handoff, the first ever open would report
+	// the position the panel was merely placed at, and a caller that treats "no
+	// remembered position" as "anchor near the pointer" would lose pointer
+	// anchoring forever after one glance at the forecast. Without the position
+	// comparison, a bare click on the panel body would do the same, because a click
+	// is handed to the move loop exactly like a drag - as is a drag the user
+	// cancels with Escape, which the window manager undoes.
+	//
+	// Backends read BOTH positions through the same call - gtk_window_get_position
+	// on GTK, GetWindowRect on Win32 - and never compare against the placement they
+	// asked for. That is what keeps the rule correct on Wayland, where a client
+	// cannot know its own toplevel's position and the toolkit answers (0,0) for
+	// every window: both reads are then equal, so nothing is reported, which is the
+	// right answer there rather than persisting a corner the user never chose.
+	//
+	// It is always called on a throwaway goroutine, with the coordinates already
+	// read on whatever thread owns the windows. That is one contract for every
+	// backend, and the reason for it is that the callback writes the config file:
+	// running it inline would put a disk write inside the toolkit's main loop.
+	OnMove func(x, y int)
 }
+
+// Point is a screen position in the same coordinate space the window manager
+// uses, which is why negative values are ordinary rather than a mistake: a
+// monitor placed left of the primary one has them.
+type Point struct{ X, Y int }
 
 // Backend draws Nimbus's windows. Every method may be called from any
 // goroutine; a backend that needs a particular thread marshals internally.

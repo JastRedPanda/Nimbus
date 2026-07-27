@@ -42,6 +42,7 @@ const (
 	ID_FONT_SCALE        = 120
 	ID_DEL_CFG           = 121
 	ID_INTERVAL          = 122
+	ID_PIN_FORECAST      = 123
 	WM_APP_SEARCH_RESULT = win.WM_APP + 1
 
 	// Trackbar messages lxn/win does not declare. There is deliberately no
@@ -63,8 +64,18 @@ const (
 	// createControls is written in the same units and goes through dp() on its
 	// way to Win32, so at 100% scaling these are literally the numbers Windows
 	// receives.
+	//
+	// The height is NOT derived from createControls' running y, so adding a row
+	// there means growing it by the same amount here. Nothing catches the
+	// mismatch: layoutDPI shrinks the layout to fit the SCREEN, never to fit the
+	// content, so a window left too short simply clips whatever is at the bottom
+	// - which is the Save button.
+	//
+	// Where 734 comes from: createControls' running y reaches 684 at the button
+	// row, the buttons are 28 tall, and the remaining 22 is the bottom margin this
+	// layout has always left below them.
 	settingsContentW = 440
-	settingsContentH = 700
+	settingsContentH = 734
 )
 
 var (
@@ -113,6 +124,14 @@ type setDlg struct {
 
 	onFontChange   func(int)
 	fontScaleLabel win.HWND
+
+	// pinCheck is kept because a missing control cannot be told from an unticked
+	// one: BM_GETCHECK on a zero HWND answers 0, which reads as false. For every
+	// other control in this window the false answer happens to be what
+	// config.Default() says, so a creation failure is invisible - but
+	// ForecastPinned defaults to TRUE, so reading it back from a control that was
+	// never created would silently turn off an option the user was never shown.
+	pinCheck win.HWND
 
 	// results belongs to the UI thread. pending is the hand-off from the
 	// search goroutine, which touches nothing else in here.
@@ -195,6 +214,12 @@ func initCommon() {
 // life of the process, and with it the Settings menu item, which is precisely
 // what Cancel used to do.
 func (d *setDlg) finish(nc *config.Config) {
+	// The destroy stays OUTSIDE this Once, and moving it in would wedge this
+	// backend the way the GTK one was wedged: a window procedure that reaches
+	// finish again from WM_DESTROY re-enters once.Do on the same thread, and
+	// sync.Once holds a non-reentrant mutex until its function returns. Here the
+	// callers destroy the window after finish has returned, so the nesting cannot
+	// happen - see the comment in settings_linux.go for what it cost when it did.
 	d.once.Do(func() { d.result <- nc })
 }
 
@@ -374,6 +399,20 @@ func (d *setDlg) createControls() {
 	d.fontScaleLabel = d.static(fmt.Sprintf("%d%%", d.cfg.FontScale), 272, y+16, 40, 20)
 	y += 56
 
+	// No group box round a single checkbox: a titled frame whose only content is
+	// one labelled control says the same thing twice, and the caption it would add
+	// is not free here. This layout is not scrolled and not resizable, so height
+	// is paid for out of legibility: layoutDPI shrinks the WHOLE window - every
+	// label, every radio - until it fits the work area, so 22 more units of chrome
+	// makes the text smaller on precisely the small screens that can least afford
+	// it. The checkbox's own label is its title.
+	//
+	// 22 for the box, 12 of clearance below it. The 12 is what the frame used to
+	// provide: without it the interval group's caption sits on the checkbox's
+	// label, since a group box's caption is drawn ON its top border.
+	d.pinCheck = d.check(d.lang.PinForecast(), 12, y, 340, 22, ID_PIN_FORECAST, d.cfg.ForecastPinned)
+	y += 34
+
 	d.group(d.lang.UpdateInterval(), 12, y, 340, 48)
 	d.combo(86, y+14, 180, 200, ID_INTERVAL, d.cfg.UpdateInterval)
 	y += 66
@@ -413,6 +452,24 @@ func (d *setDlg) group(text string, x, y, w, h int) win.HWND {
 func (d *setDlg) radio(text string, x, y, w, h int, id int32, checked, first bool) win.HWND {
 	return d.adopt(unthemeForDark(
 		createRadio(d.hwnd, text, d.dp(x), d.dp(y), d.dp(w), d.dp(h), id, checked, first), d.dark))
+}
+
+// check makes a checkbox. The unthemeForDark treatment is not optional and not
+// copied for symmetry: a checkbox is a BUTTON like the radios and the group
+// boxes, so Common-Controls 6 paints its caption in the theme's own colour over
+// the dark brush this window supplies, and the label goes near-black on
+// near-black. See unthemeForDark.
+//
+// A zero return is the caller's to handle, and the log line is here because the
+// caller's handling is to leave the stored value alone - which is correct and
+// completely silent.
+func (d *setDlg) check(text string, x, y, w, h int, id int32, checked bool) win.HWND {
+	hwnd := d.adopt(unthemeForDark(
+		createCheck(d.hwnd, text, d.dp(x), d.dp(y), d.dp(w), d.dp(h), id, checked), d.dark))
+	if hwnd == 0 {
+		log.Printf("settings: checkbox %d creation failed", id)
+	}
+	return hwnd
 }
 
 func (d *setDlg) listBox(x, y, w, h int, id int32) win.HWND {
@@ -696,6 +753,12 @@ func (d *setDlg) onSave() {
 		nc.WindUnit = "ms"
 	}
 	nc.FontScale = d.getSlider(ID_FONT_SCALE)
+	// Only when the box was actually built, for the reason pinCheck records; nc
+	// carries the stored value forward when it was not. The GTK backend guards its
+	// own checkbox the same way.
+	if d.pinCheck != 0 {
+		nc.ForecastPinned = d.isChecked(ID_PIN_FORECAST)
+	}
 
 	if sel := d.getComboSel(ID_INTERVAL); sel >= 0 && sel < len(intervals) {
 		nc.UpdateInterval = intervals[sel].minutes
@@ -780,6 +843,39 @@ func createRadio(parent win.HWND, text string, x, y, w, h int, id int32, checked
 	t := syscall.StringToUTF16(text)
 	hwnd := win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
 		style, int32(x), int32(y), int32(w), int32(h),
+		parent, win.HMENU(id), 0, nil)
+	if checked {
+		win.SendMessage(hwnd, win.BM_SETCHECK, 1, 0)
+	}
+	return hwnd
+}
+
+// createCheck makes an auto checkbox, which toggles itself on a click. Nothing
+// therefore answers its WM_COMMAND: the state is read back with BM_GETCHECK when
+// Save runs, exactly as the radios are.
+//
+// There is no "first" argument as createRadio has because WS_GROUP is not
+// optional here, and the reasoning in the earlier version of this comment had the
+// flag backwards. WS_GROUP marks the START of a group, not its end: it is set on
+// the FIRST radio of each set, and every control created after it belongs to that
+// set until the next WS_GROUP appears. So a checkbox without it does not stand
+// outside the radio groups - it joins the last one that was opened, which is
+// ID_LANG_EN's. The dialog manager's arrow keys move within a group and CHECK the
+// auto-radio they land on, so an arrow key pressed on an unflagged checkbox
+// silently changes the language. Setting WS_GROUP closes that set at the checkbox
+// and starts a new one, which is exactly what a control belonging to no set
+// wants. WS_TABSTOP is separate and is what makes it reachable by Tab.
+//
+// What this does NOT fix, because it predates the checkbox: nothing between
+// ID_LANG_EN and here carries WS_GROUP either, so the font-scale trackbar is
+// still inside the language group and an arrow key on "English" can still walk
+// focus onto it. Fixing that means auditing the group boundaries of the whole
+// window, which is its own change.
+func createCheck(parent win.HWND, text string, x, y, w, h int, id int32, checked bool) win.HWND {
+	t := syscall.StringToUTF16(text)
+	hwnd := win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
+		win.WS_CHILD|win.WS_VISIBLE|win.BS_AUTOCHECKBOX|win.WS_TABSTOP|win.WS_GROUP,
+		int32(x), int32(y), int32(w), int32(h),
 		parent, win.HMENU(id), 0, nil)
 	if checked {
 		win.SendMessage(hwnd, win.BM_SETCHECK, 1, 0)

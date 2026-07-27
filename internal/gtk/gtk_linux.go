@@ -15,8 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"log"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/ebitengine/purego"
 )
@@ -44,6 +46,18 @@ const (
 	typeString    = 16 << 2
 	sourceRemove  = 0 // G_SOURCE_REMOVE
 	stateNormal   = 0 // GTK_STATE_FLAG_NORMAL
+
+	// GdkEventMask, and GDK's pointer button numbering. A GtkWindow subscribes
+	// to no button presses of its own, so the mask is what makes a press on the
+	// window body observable at all - see DragOnPress.
+	buttonPressMask = 1 << 8 // GDK_BUTTON_PRESS_MASK
+	primaryButton   = 1      // GDK_BUTTON_PRIMARY
+
+	// GdkModifierType. The same number as GDK_BUTTON_PRESS_MASK above and a
+	// different enumeration entirely: this one appears in the modifier mask
+	// gdk_window_get_device_position writes, where it means the primary button
+	// is physically down at this instant - see PrimaryButtonHeld.
+	button1Mask = 1 << 8 // GDK_BUTTON1_MASK
 
 	dialogModal       = 1 // GTK_DIALOG_MODAL
 	dialogDestroyWith = 2 // GTK_DIALOG_DESTROY_WITH_PARENT
@@ -132,6 +146,7 @@ var (
 	devicePosition  func(uintptr, *uintptr, *int32, *int32)
 	monitorAtPoint  func(uintptr, int32, int32) uintptr
 	monitorWorkarea func(uintptr, *int32)
+	monitorGeometry func(uintptr, *int32)
 	eventKeyval     func(uintptr, *uint32) int32
 
 	widgetScale    func(uintptr) int32
@@ -155,6 +170,7 @@ var (
 	objUnref      func(uintptr)
 
 	idleAdd     func(uintptr, uintptr) uint32
+	timeoutAdd  func(uint32, uintptr, uintptr) uint32
 	listAppend  func(uintptr, uintptr) uintptr
 	listForeach func(uintptr, uintptr, uintptr)
 	listFree    func(uintptr)
@@ -185,6 +201,27 @@ var (
 	frameNew         func(string) uintptr
 	widgetSensitive  func(uintptr, int32)
 	containerChild   func(uintptr) uintptr
+
+	// The draggable, pinnable panel: a press on the window body starts a window
+	// manager move, and the position it ends up at is read back so it can be
+	// remembered. Unlike everything above, these are bound with bindOptional and
+	// are nil on a GTK that does not export them, so every caller MUST nil-check
+	// them - see DragOnPress, Position and NewCheck.
+	widgetAddEvents func(uintptr, int32)
+	windowMoveDrag  func(uintptr, int32, int32, int32, uint32)
+	eventButton     func(uintptr, *uint32) int32
+	eventRoot       func(uintptr, *float64, *float64) int32
+	eventTime       func(uintptr) uint32
+	windowGetPos    func(uintptr, *int32, *int32)
+	checkNewLabel   func(string) uintptr
+
+	// The other half of the draggable panel: whether the primary button is still
+	// held, which is the only honest answer to "is the window manager still
+	// moving this window" - GTK emits no signal for the end of a move. Bound
+	// optionally and nil-checked in PrimaryButtonHeld, which reports "cannot
+	// tell" when either is missing.
+	screenRootWindow func(uintptr) uintptr
+	windowDevicePos  func(uintptr, uintptr, *int32, *int32, *uint32) uintptr
 )
 
 var (
@@ -288,6 +325,7 @@ func load() {
 	purego.RegisterLibFunc(&devicePosition, gtk, "gdk_device_get_position")
 	purego.RegisterLibFunc(&monitorAtPoint, gtk, "gdk_display_get_monitor_at_point")
 	purego.RegisterLibFunc(&monitorWorkarea, gtk, "gdk_monitor_get_workarea")
+	purego.RegisterLibFunc(&monitorGeometry, gtk, "gdk_monitor_get_geometry")
 	purego.RegisterLibFunc(&eventKeyval, gtk, "gdk_event_get_keyval")
 
 	purego.RegisterLibFunc(&cssProviderNew, gtk, "gtk_css_provider_new")
@@ -331,6 +369,22 @@ func load() {
 	purego.RegisterLibFunc(&widgetSensitive, gtk, "gtk_widget_set_sensitive")
 	purego.RegisterLibFunc(&containerChild, gtk, "gtk_container_get_children")
 
+	// The pinned-panel bindings. Every one of them has existed since GTK 2, so a
+	// library missing one is not a case anyone expects to meet - but the cost of
+	// surviving it is a nil check at three call sites, and the cost of not
+	// surviving it is the entire GTK UI falling back to the browser over a panel
+	// that cannot be dragged. bindOptional is what buys that, so these do not go
+	// through RegisterLibFunc.
+	bindOptional(&widgetAddEvents, gtk, "gtk_widget_add_events")
+	bindOptional(&windowMoveDrag, gtk, "gtk_window_begin_move_drag")
+	bindOptional(&eventButton, gtk, "gdk_event_get_button")
+	bindOptional(&eventRoot, gtk, "gdk_event_get_root_coords")
+	bindOptional(&eventTime, gtk, "gdk_event_get_time")
+	bindOptional(&windowGetPos, gtk, "gtk_window_get_position")
+	bindOptional(&checkNewLabel, gtk, "gtk_check_button_new_with_label")
+	bindOptional(&screenRootWindow, gtk, "gdk_screen_get_root_window")
+	bindOptional(&windowDevicePos, gtk, "gdk_window_get_device_position")
+
 	// These three live in libgdk-3.so.0 and libcairo.so.2, not in libgtk-3, and
 	// are still resolved through the libgtk-3 handle: dlsym searches the
 	// library's own dependency chain, and GTK3 links both hard. Verified with
@@ -368,6 +422,7 @@ func load() {
 	purego.RegisterLibFunc(&objUnref, gobject, "g_object_unref")
 
 	purego.RegisterLibFunc(&idleAdd, glib, "g_idle_add")
+	purego.RegisterLibFunc(&timeoutAdd, glib, "g_timeout_add")
 	purego.RegisterLibFunc(&listAppend, glib, "g_list_append")
 	purego.RegisterLibFunc(&listForeach, glib, "g_list_foreach")
 	purego.RegisterLibFunc(&listFree, glib, "g_list_free")
@@ -385,6 +440,38 @@ func load() {
 	if initCheck(0, 0) == 0 {
 		loadErr = errors.New("gtk: gtk_init_check failed (no display?)")
 	}
+}
+
+// bindOptional binds a symbol Nimbus can manage without, leaving fptr nil when
+// the loaded library does not export it.
+//
+// purego.RegisterLibFunc panics on a missing symbol and load's recover turns
+// that panic into loadErr, which aborts the rest of load and makes Ready report
+// false. That is exactly right for a symbol without which no window can be
+// drawn, and exactly wrong for one that costs a single feature: it would drop the
+// user into the browser fallback because a panel could not be dragged. Dlsym is
+// the same escape hatch destroyAddr already uses, for the same reason - it
+// reports rather than panics.
+//
+// The failure is logged because nothing else can report it. The symbol name is a
+// string literal, so a typo in one is invisible to the compiler, to go vet and to
+// every test - the func var is simply nil and the feature quietly is not there.
+// The loudest case is not the drag: NewCheck returns Check(0), and the settings
+// window then cannot change ForecastPinned at all, for anyone, forever, with no
+// error anywhere. A line on stderr is what turns that into something a bug report
+// can carry.
+//
+// Anything bound this way MUST be nil-checked before it is called.
+func bindOptional(fptr any, lib uintptr, name string) {
+	addr, err := purego.Dlsym(lib, name)
+	if err == nil && addr == 0 {
+		err = errors.New("dlsym returned a NULL address")
+	}
+	if err != nil {
+		log.Printf("gtk: optional symbol %s is missing, the feature it serves is off: %v", name, err)
+		return
+	}
+	purego.RegisterFunc(fptr, addr)
 }
 
 // Ready reports whether GTK is usable. It deliberately does NOT require the
@@ -460,6 +547,34 @@ func Invoke(fn func()) error {
 	return nil
 }
 
+// After runs fn on the GTK main loop once, no sooner than d from now. It is how
+// a caller asks GDK something again in a moment - see PrimaryButtonHeld, whose
+// caller has to keep asking because GTK emits no signal for the end of a window
+// manager move.
+//
+// It costs no new trampoline, which is the whole reason it is g_timeout_add and
+// not a goroutine that sleeps and calls Invoke: g_timeout_add takes the same
+// GSourceFunc as g_idle_add, and dispatchIdle already returns G_SOURCE_REMOVE,
+// so the source removes itself after its single call. The fixed callback budget
+// stays at three. A timeout also sits at G_PRIORITY_DEFAULT rather than
+// G_PRIORITY_DEFAULT_IDLE, so a busy event stream - a drag, which is exactly the
+// case this serves - cannot defer it indefinitely.
+//
+// Timing is best effort, like every GLib timeout: it runs no earlier than d and
+// later if the loop is busy, so callers must treat it as "ask again soon" and
+// never as a deadline. d is rounded up to whole milliseconds because
+// g_timeout_add counts in them, and rounding down would turn a sub-millisecond
+// request into a zero-interval source that spins the loop.
+//
+// Must be called on the GTK thread.
+func After(d time.Duration, fn func()) {
+	ms := (d + time.Millisecond - 1) / time.Millisecond
+	if ms < 0 {
+		ms = 0
+	}
+	timeoutAdd(uint32(ms), idleTrampoline, register(idleFns, fn))
+}
+
 // Connect attaches fn to a signal that carries no arguments Nimbus cares about.
 // The registration lives as long as the process. Must be called on the GTK
 // thread.
@@ -497,6 +612,30 @@ func ConnectScoped(obj uintptr, signal string, fn func()) {
 	ConnectOnce(obj, "destroy", func() {
 		cbMu.Lock()
 		delete(voidFns, id)
+		cbMu.Unlock()
+	})
+}
+
+// ConnectEventScoped is ConnectEvent for a handler that should not outlive the
+// widget it is attached to. It is what every window-level event handler here uses,
+// because a window is the most frequently created widget in this program: the
+// forecast panel is opened and closed all session, and each opening used to leave
+// its Escape, focus-in, focus-out and button-press closures in eventFns for the
+// life of the process, along with everything those closures captured.
+//
+// Like ConnectScoped it costs no extra trampoline: the release is a ConnectOnce on
+// "destroy", which deletes its own entry when it fires. Prefer plain ConnectEvent
+// only for a widget that genuinely lives as long as the process.
+func ConnectEventScoped(obj uintptr, signal string, fn func(event uintptr) bool) {
+	cbMu.Lock()
+	cbSeq++
+	id := cbSeq
+	eventFns[id] = fn
+	cbMu.Unlock()
+	signalConnect(obj, signal, eventTrampoline, id, 0, 0)
+	ConnectOnce(obj, "destroy", func() {
+		cbMu.Lock()
+		delete(eventFns, id)
 		cbMu.Unlock()
 	})
 }
@@ -541,6 +680,12 @@ func PrefersDark() bool {
 }
 
 var (
+	// cssMu must not be held across anything that can emit a signal Nimbus
+	// handles. It is taken on the GTK thread and everything under it is a GTK
+	// call, which is exactly the shape that deadlocked the settings window: a
+	// handler re-entering the guard it is already inside blocks on it forever, on
+	// the one thread the whole toolkit depends on. Nothing reaches it today; the
+	// note is here so the next thing added under the lock is weighed first.
 	cssMu     sync.Mutex
 	cssLoaded bool
 )
@@ -789,16 +934,46 @@ func setStringProp(obj uintptr, name, val string) {
 	valueUnset(&gvalue[0])
 }
 
-// ShowError puts up a modal error dialog and returns immediately. It never
-// calls gtk_dialog_run: that spins a nested main loop, and while the nested
-// loop is up systray's gtk_main_quit is silently deferred, so the tray's Quit
-// item stops working until the dialog is dismissed.
+// ShowError puts up an error dialog and returns immediately.
+//
+// It never calls gtk_dialog_run: that spins a nested main loop, and while the
+// nested loop is up gtk_main_quit is silently deferred, so the tray's Quit item
+// stops working until the dialog is dismissed.
+//
+// It is NOT modal, and that is a deliberate change from what it was. GTK modality
+// on a dialog with no transient parent adds an application-wide gtk_grab_add, and
+// GTK then routes input to the grab widget only: every other window this process
+// owns stops taking clicks, and gtk_main.c ignores their WM close buttons too. The
+// dialog is small and the window manager places it wherever it likes, so on a
+// large desktop the user gets an application that appears frozen with no visible
+// cause. Nothing here needs an answer before the program can continue, which is
+// the only thing modality is for.
+//
+// At most one is on screen at a time. Errors here arrive in bursts - one per
+// failed fetch, and a weather service that is down fails every attempt - and a
+// stack of identical dialogs is worse than the first one: each has to be
+// dismissed separately, and until they are, the newest hides that the older ones
+// are the same message.
 //
 // The button label is passed in rather than using GTK_BUTTONS_CLOSE, whose text
 // comes from GTK's own catalogue keyed to the system locale rather than to the
 // language the user picked in Nimbus. Must be called on the GTK thread.
 func ShowError(title, text, detail, button string) {
-	dlg := msgDialogNew(0, dialogModal|dialogDestroyWith, messageError, buttonsNone, 0)
+	if errorDialog != 0 {
+		// Update the text, do not just raise it: a second failure can carry a
+		// different message, and without this only the first one would ever be
+		// read. Not modal any more either, so the window manager may have it
+		// behind something and gtk_window_present may change nothing visible -
+		// which makes writing the current message into it the only thing that is
+		// guaranteed to be seen when it does come forward.
+		setStringProp(errorDialog, "text", text)
+		if detail != "" {
+			setStringProp(errorDialog, "secondary-text", detail)
+		}
+		windowPresent(errorDialog)
+		return
+	}
+	dlg := msgDialogNew(0, dialogDestroyWith, messageError, buttonsNone, 0)
 	if dlg == 0 {
 		return
 	}
@@ -815,8 +990,15 @@ func ShowError(title, text, detail, button string) {
 	dialogAddBtn(dlg, button, responseClose)
 	dialogDefResp(dlg, responseClose)
 	signalConnect(dlg, "response", destroyAddr, dlg, 0, connectSwapped)
+	// Cleared on destroy so the next failure can put up a fresh dialog. Read and
+	// written only on the GTK thread, like the rest of this function.
+	errorDialog = dlg
+	ConnectOnce(dlg, "destroy", func() { errorDialog = 0 })
 	widgetShowAll(dlg)
 }
+
+// errorDialog is the error dialog currently on screen, or 0. GTK thread only.
+var errorDialog uintptr
 
 // Image is a non-premultiplied RGBA buffer ready to hand to gdk-pixbuf.
 type Image struct {
@@ -984,7 +1166,7 @@ func (w Window) SetTranslucent() bool {
 // bar this is the dismissal path that always works, whatever the window manager
 // does with focus.
 func (w Window) OnEscape(fn func()) {
-	ConnectEvent(uintptr(w), "key-press-event", func(event uintptr) bool {
+	ConnectEventScoped(uintptr(w), "key-press-event", func(event uintptr) bool {
 		var keyval uint32
 		if eventKeyval(event, &keyval) == 0 || keyval != keyEscape {
 			return false
@@ -999,7 +1181,7 @@ func (w Window) OnEscape(fn func()) {
 // given focus when it is mapped, so a focus-out can arrive before the window was
 // ever focused at all.
 func (w Window) OnFocusIn(fn func()) {
-	ConnectEvent(uintptr(w), "focus-in-event", func(uintptr) bool {
+	ConnectEventScoped(uintptr(w), "focus-in-event", func(uintptr) bool {
 		fn()
 		return false
 	})
@@ -1010,7 +1192,7 @@ func (w Window) OnFocusIn(fn func()) {
 // including another of this application's own, so it is a convenience on top of
 // OnEscape rather than the only way out.
 func (w Window) OnFocusOut(fn func()) {
-	ConnectEvent(uintptr(w), "focus-out-event", func(uintptr) bool {
+	ConnectEventScoped(uintptr(w), "focus-out-event", func(uintptr) bool {
 		fn()
 		return false
 	})
@@ -1035,29 +1217,165 @@ func (w Window) Size() (int, int) {
 // way to position its own toplevel, and the call is silently ignored there.
 func (w Window) Move(x, y int) { windowMove(uintptr(w), int32(x), int32(y)) }
 
+// gbutton, groot, gpos, gdevXY and gmask are scratch out-parameters for the
+// accessors that write through a pointer instead of returning:
+// gdk_event_get_button takes a guint*, gdk_event_get_root_coords two gdouble*,
+// gtk_window_get_position two gint*, gdk_window_get_device_position two gint*
+// and a GdkModifierType*. They live at package scope for the same reason gvalue
+// does - a Go stack moves when it grows, and a pointer into one is not an
+// address to hand to C - and each call gets its own so no accessor can scribble
+// over a value another is still reading. Only the GTK thread touches them.
+var (
+	gbutton uint32
+	groot   [2]float64
+	gpos    [2]int32
+	gdevXY  [2]int32
+	gmask   uint32
+)
+
+// DragOnPress makes a press anywhere on the window body start a window manager
+// move. It is how a panel with no title bar can be moved at all, and it works
+// whether or not the panel is pinned.
+//
+// gtk_widget_add_events is load-bearing: a GtkWindow does not ask GDK for button
+// presses, so without GDK_BUTTON_PRESS_MASK the handler is connected and then
+// never fires once.
+//
+// The event is read through gdk_event_get_button, gdk_event_get_root_coords and
+// gdk_event_get_time, never by reaching into GdkEventButton at a struct offset -
+// offsets into a GDK struct are how this package got burned once already, and the
+// accessors are what OnEscape already does with gdk_event_get_keyval.
+//
+// A press on the close button never arrives here, and that is precisely what
+// keeps the button working: a GtkButton has its own GdkWindow and consumes its
+// own press, so button-press-event on the toplevel only fires where no child
+// claimed the event. The drag therefore hit-tests nothing, and pressing the
+// close button cannot start a drag. For the same reason the handler returns
+// false: an event that reached the toplevel was refused by everything below it,
+// so there is nothing to be gained by stopping the chain here.
+//
+// started, if not nil, runs just before a press is handed to the window manager.
+// It says that a press became a drag, which is NOT the same as saying the window
+// moved - a bare click on the panel body reaches here too, and so does a drag the
+// user cancels with Escape. So it is only half of "should the position be
+// persisted"; the caller pairs it with Position, recording the position here and
+// comparing it at close, and persists nothing unless the two differ. Reading both
+// through Position is also what makes this correct on Wayland, where it always
+// answers 0,0: the two reads compare equal, so nothing is written.
+//
+// It fires for exactly the presses that become drags, so not for button 2 or 3,
+// and not at all when a binding is missing. It runs on the GTK thread inside the
+// event handler, so it must not block; recording a couple of ints is what it is
+// for.
+//
+// Must be called on the GTK thread. Degrades to "cannot drag" rather than
+// crashing when any symbol dragReady checks is missing.
+func (w Window) DragOnPress(started func()) {
+	if !dragReady() {
+		return
+	}
+	widgetAddEvents(uintptr(w), buttonPressMask)
+	ConnectEventScoped(uintptr(w), "button-press-event", func(event uintptr) bool {
+		if eventButton(event, &gbutton) == 0 || gbutton != primaryButton {
+			return false
+		}
+		if eventRoot(event, &groot[0], &groot[1]) == 0 {
+			return false
+		}
+		// Before the handoff, not after, because the position has to be read
+		// while it is still the position the drag starts from.
+		//
+		// It is NOT because the call can block - it cannot, on either X11 path.
+		// gtk_window_begin_move_drag is a one-line wrapper over
+		// gdk_window_begin_move_drag, and gdk/x11/gdkwindow-x11.c splits on
+		// whether the manager advertises _NET_WM_MOVERESIZE: wmspec_moveresize
+		// ungrabs the seat, sends one ClientMessage to the root window and
+		// returns, while emulate_move_drag/create_moveresize_window grabs an
+		// InputOnly helper window of GDK's own and returns, leaving the move to
+		// _gdk_x11_moveresize_handle_event in the ordinary event dispatch.
+		// Neither waits for the drop, so this handler returns and the main loop
+		// keeps dispatching for the whole move. An earlier version of this
+		// comment claimed the opposite; forecast_linux.go depends on the truth,
+		// since a call that blocked would make its mid-move deferral pointless.
+		if started != nil {
+			started()
+		}
+		windowMoveDrag(uintptr(w), primaryButton,
+			int32(groot[0]), int32(groot[1]), eventTime(event))
+		return false
+	})
+}
+
+// dragReady reports whether every optional symbol DragOnPress needs resolved.
+// It exists so the set is written down once: the guard used to be inline with the
+// count repeated in prose above it, and the prose fell a symbol behind the code
+// the first time one was added - which quietly undercut the whole argument for
+// binding these optionally. Anyone adding a symbol to the drag path adds it here
+// and nowhere else.
+func dragReady() bool {
+	return widgetAddEvents != nil && windowMoveDrag != nil &&
+		eventButton != nil && eventRoot != nil && eventTime != nil
+}
+
+// Position reports where the window actually is, which is what a panel the user
+// has dragged must be asked before its place can be remembered: the coordinates
+// handed to Move are a request, and the window manager is free to honour them
+// only approximately.
+//
+// X11 only, with the same caveat as Move: on Wayland a client cannot know its own
+// toplevel's global position, so GTK answers 0,0 - not as an error but as the only
+// thing it can say. It answers 0,0 for a missing gtk_window_get_position too, and
+// neither case is distinguishable from a window genuinely at the top-left corner.
+//
+// The signature stays (int, int) rather than growing an ok result because that
+// 0,0 costs nothing: the caller reads this once when a drag begins and once when
+// the panel closes, and persists a position only when the two differ. On Wayland
+// both reads are 0,0, so a Wayland session never writes ForecastX or ForecastY at
+// all. That is the wanted outcome and not a gap to plug - a Wayland client has no
+// global coordinates to remember, and a remembered position could not be honoured
+// there either, since Move is equally ignored.
+func (w Window) Position() (int, int) {
+	if windowGetPos == nil {
+		return 0, 0
+	}
+	windowGetPos(uintptr(w), &gpos[0], &gpos[1])
+	return int(gpos[0]), int(gpos[1])
+}
+
 // Show maps the window itself, without touching its children.
 func (w Window) Show() { widgetShow(uintptr(w)) }
 
 // NewButton creates a push button that runs fn when clicked.
+// The handler is scoped to the button: a push button never outlives the window it
+// was packed into, and the settings window alone builds five of them every time it
+// opens.
 func NewButton(label string, fn func()) uintptr {
 	b := buttonNew(label)
-	Connect(b, "clicked", fn)
+	ConnectScoped(b, "clicked", fn)
 	return b
+}
+
+// pointerDevice resolves the default seat's pointer, or 0 when any link in the
+// chain is missing. Written once because both pointer questions this package
+// answers - where it is and which buttons it holds - have to walk the same
+// display, seat, device chain first.
+func pointerDevice() uintptr {
+	display := displayDefault()
+	if display == 0 {
+		return 0
+	}
+	seat := displaySeat(display)
+	if seat == 0 {
+		return 0
+	}
+	return seatPointer(seat)
 }
 
 // PointerPosition reports where the pointer is in root coordinates. Must be
 // called on the GTK thread - this reaches into GDK, which is not thread-safe.
 // Returns ok=false on Wayland, where a client cannot see global coordinates.
 func PointerPosition() (x, y int, ok bool) {
-	display := displayDefault()
-	if display == 0 {
-		return 0, 0, false
-	}
-	seat := displaySeat(display)
-	if seat == 0 {
-		return 0, 0, false
-	}
-	pointer := seatPointer(seat)
+	pointer := pointerDevice()
 	if pointer == 0 {
 		return 0, 0, false
 	}
@@ -1065,6 +1383,54 @@ func PointerPosition() (x, y int, ok bool) {
 	var px, py int32
 	devicePosition(pointer, &screen, &px, &py)
 	return int(px), int(py), true
+}
+
+// PrimaryButtonHeld reports whether the pointer's primary button is physically
+// down at this instant, and whether the question could be answered at all.
+//
+// It exists because GTK has no signal for the end of a window manager move. The
+// panel hands a press to the manager with gtk_window_begin_move_drag and is then
+// told nothing further: the button release goes to whoever holds the pointer
+// grab for the move, which is the window manager on the EWMH path and GDK's own
+// hidden helper window on the emulated one, and never the panel's toplevel. The
+// button state is the one fact about the move that can still be read, and it can
+// be read at any moment rather than waited for.
+//
+// ok=false MUST be read as "assume it is not held". A caller that suppresses
+// behaviour while the button is down has to fall back to not suppressing it,
+// because the alternative - assuming a drag is in progress because GDK would not
+// say - is a window that can never be dismissed.
+//
+// The mask is asked of the ROOT window rather than of the panel: the root always
+// exists, needs no realise, and is the same rectangle the pointer coordinates
+// are already reported in. gmask is cleared first because a failed query leaves
+// it untouched, and zero is the answer that fails towards "not held".
+//
+// It works during another client's pointer grab, which is the only reason it can
+// serve this purpose: GDK asks the X server (XIQueryPointer, or XQueryPointer on
+// core input), and the server reports the real button state to any client
+// regardless of who holds a grab.
+//
+// Must be called on the GTK thread.
+func PrimaryButtonHeld() (held, ok bool) {
+	if screenRootWindow == nil || windowDevicePos == nil {
+		return false, false
+	}
+	screen := screenDefault()
+	if screen == 0 {
+		return false, false
+	}
+	root := screenRootWindow(screen)
+	if root == 0 {
+		return false, false
+	}
+	pointer := pointerDevice()
+	if pointer == 0 {
+		return false, false
+	}
+	gmask = 0
+	windowDevicePos(root, pointer, &gdevXY[0], &gdevXY[1], &gmask)
+	return gmask&button1Mask != 0, true
 }
 
 // Rect is a GdkRectangle: four ints, in root coordinates.
@@ -1085,6 +1451,42 @@ func WorkAreaAt(x, y int) (Rect, bool) {
 	}
 	var r [4]int32
 	monitorWorkarea(monitor, &r[0])
+	if r[2] <= 0 || r[3] <= 0 {
+		return Rect{}, false
+	}
+	return Rect{X: int(r[0]), Y: int(r[1]), W: int(r[2]), H: int(r[3])}, true
+}
+
+// GeometryAt returns the full extent of the monitor containing the given point,
+// panels and docks included. It answers a different question from WorkAreaAt, and
+// a remembered panel position needs both: is this point still on a monitor at all,
+// and where on that monitor may a window be placed.
+//
+// Testing containment against the work area instead is what made the two backends
+// disagree. Win32 asks MonitorFromRect - which is geometry, taskbar included -
+// whether the remembered point exists, then clamps it into the work area. GTK
+// tested the point against the work area itself, so a panel the user dropped with
+// its top-left corner over the desktop panel was clamped back into view on Windows
+// and silently forgotten on Linux. Contain against geometry, clamp into the work
+// area.
+//
+// The containment test belongs to the caller, not here: gdk_display_get_monitor_at_point
+// answers with a NEARBY monitor for a point that is on none, so a monitor handle
+// coming back is not evidence the point was on it. The rectangle is, once the
+// caller checks the point against it.
+//
+// Must be called on the GTK thread, like everything else reaching into GDK.
+func GeometryAt(x, y int) (Rect, bool) {
+	display := displayDefault()
+	if display == 0 {
+		return Rect{}, false
+	}
+	monitor := monitorAtPoint(display, int32(x), int32(y))
+	if monitor == 0 {
+		return Rect{}, false
+	}
+	var r [4]int32
+	monitorGeometry(monitor, &r[0])
 	if r[2] <= 0 || r[3] <= 0 {
 		return Rect{}, false
 	}
@@ -1287,6 +1689,30 @@ func (g RadioGroup) SetActive(i int) {
 	toggleSetActive(g[i], 1)
 }
 
+// Check is a GtkCheckButton: one box that is independently on or off, as opposed
+// to a RadioGroup where setting one member clears another. All methods must be
+// called on the GTK thread.
+type Check uintptr
+
+// NewCheck creates a labelled check box in the given state.
+//
+// A GtkCheckButton is a GtkToggleButton, so its state is read and written with
+// the very gtk_toggle_button_* accessors NewRadioGroup already uses - there is no
+// check-button specific API to bind for it.
+func NewCheck(label string, active bool) Check {
+	if checkNewLabel == nil {
+		return 0
+	}
+	c := checkNewLabel(label)
+	toggleSetActive(c, b2i(active))
+	return Check(c)
+}
+
+// Active reports whether the box is ticked. A Check that could not be created
+// reads as unticked, so a form built without one saves the option off rather than
+// dereferencing a widget that is not there.
+func (c Check) Active() bool { return c != 0 && toggleGetActive(uintptr(c)) != 0 }
+
 // Slider is a GtkScale over an integer range. All methods must be called on the
 // GTK thread.
 type Slider uintptr
@@ -1330,7 +1756,7 @@ func (s Slider) SetValue(v int) { rangeSetValue(uintptr(s), float64(v)) }
 // and rides the existing void trampoline, costing no part of the NewCallback
 // budget.
 func (s Slider) OnChange(fn func(value int)) {
-	Connect(uintptr(s), "value-changed", func() { fn(s.Value()) })
+	ConnectScoped(uintptr(s), "value-changed", func() { fn(s.Value()) })
 }
 
 // Combo is a GtkComboBoxText: a dropdown of plain strings addressed by index.

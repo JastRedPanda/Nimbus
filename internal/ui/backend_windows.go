@@ -16,9 +16,7 @@ func (win32Backend) Settings(cfg *config.Config, onFontScale func(int)) *config.
 	return showSettings(cfg, onFontScale)
 }
 
-func (win32Backend) Forecast(req gui.Forecast) {
-	showForecast(req.Lat, req.Lon, req.Units, req.Lang, req.Theme, req.WindUnit)
-}
+func (win32Backend) Forecast(req gui.Forecast) { showForecast(req) }
 
 func (win32Backend) About(theme string) { showAbout(theme) }
 

@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"log"
+
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
 	"github.com/JastRedPanda/Nimbus/internal/gui"
@@ -17,15 +19,21 @@ func (gtkBackend) Settings(cfg *config.Config, onFontScale func(int)) *config.Co
 	return showSettings(cfg, onFontScale)
 }
 
-func (gtkBackend) Forecast(req gui.Forecast) {
-	showForecast(req.Lat, req.Lon, req.Units, req.Lang, req.Theme, req.WindUnit)
-}
+func (gtkBackend) Forecast(req gui.Forecast) { showForecast(req) }
 
 func (gtkBackend) About(theme string) { showAbout(theme) }
 
+// Error marshals onto the GTK thread like every other method here. The Backend
+// contract says a method may be called from any goroutine, and both calls inside
+// need the toolkit thread: ensureAppIcon touches GDK, and ShowError reads and
+// writes the single-dialog handle that is documented GTK-thread-only.
 func (gtkBackend) Error(title, message string) {
-	ensureAppIcon()
-	gtk.ShowError(title, message, "", "Close")
+	if err := gtk.Invoke(func() {
+		ensureAppIcon()
+		gtk.ShowError(title, message, "", "Close")
+	}); err != nil {
+		log.Printf("gui: cannot show the error dialog: %v (message was: %s)", err, message)
+	}
 }
 
 func init() {

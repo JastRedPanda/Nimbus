@@ -4,8 +4,8 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"strconv"
-	"sync"
 
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
@@ -62,16 +62,38 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	win := gtk.NewWindow(l.SettingsTitle(), settingsWidth, -1, false)
 	win.SetBorder(14)
 
-	// finish resolves the caller exactly once. Every exit routes through it,
-	// including the close button, so the goroutine waiting on the channel can
-	// never be stranded - the Win32 backend hangs on Cancel for want of this.
-	var once sync.Once
+	// finish resolves the caller exactly once. Every exit routes through it -
+	// Save, Cancel, Delete, Escape and the window manager's own close button - so
+	// the goroutine waiting on the channel can never be stranded.
+	//
+	// The guard is a plain bool and MUST NOT become a sync.Once. It was one, and
+	// that deadlocked the entire GTK main loop, permanently, on every Save:
+	// gtk_widget_destroy emits "destroy" SYNCHRONOUSLY, the handler below calls
+	// finish again on this same goroutine, and sync.Once.Do is not reentrant - it
+	// holds a mutex until f returns and only marks itself done afterwards, so the
+	// nested call blocks on that mutex for the life of the process. It blocks the
+	// GTK thread, so nothing scheduled with Invoke ever runs again: the forecast
+	// panel stops opening and Quit stops working, while the tray icon keeps
+	// answering because it is pure Go on its own goroutines. No panic, no deadlock
+	// detector - the runtime still sees runnable goroutines.
+	//
+	// Everything here runs on the GTK thread and nothing else touches it, so a
+	// bool is not merely sufficient, it is the correct tool: re-entrancy is the
+	// normal case for this function, not a race to be excluded.
+	//
+	// The window manager's close button was the one exit that never showed the
+	// bug, which is why it survived testing: there "destroy" is emitted from
+	// outside finish, so the outer call runs first and the nested Destroy is the
+	// no-op gtk_widget_destroy's own in_destruction guard makes it.
+	done := false
 	finish := func(nc *config.Config) {
-		once.Do(func() {
-			settingsOpen = false
-			result <- nc
-			win.Destroy()
-		})
+		if done {
+			return
+		}
+		done = true
+		settingsOpen = false
+		result <- nc
+		win.Destroy()
 	}
 	win.OnDestroy(func() { finish(nil) })
 	win.OnEscape(func() { finish(nil) })
@@ -98,6 +120,15 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 
 	scale := sliderFrame(page, l, cfg.FontScale, onFontScale)
 
+	// Straight into the page, with no frame around it. A titled border holding a
+	// single checkbox is chrome for nothing, and this window has no vertical
+	// space to give it: measured on a 1366x768 display under BlackMATE it already
+	// stood at 688 against a 720 work area, and the frame took it to 750, which
+	// puts Save, Cancel and Delete below the bottom edge of a window that is
+	// neither resizable nor scrollable. The checkbox's own label is its title.
+	pin := gtk.NewCheck(l.PinForecast(), cfg.ForecastPinned)
+	gtk.PackStart(page, uintptr(pin), false, false, 0)
+
 	interval := gtk.NewCombo(intervalLabels(), intervalIndex(cfg.UpdateInterval))
 	gtk.PackStart(page, gtk.NewFrame(l.UpdateInterval(), uintptr(interval)), false, false, 0)
 
@@ -112,10 +143,21 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		nc.IconTheme = pick(theme.Active(), "auto", "dark", "light")
 		nc.Language = pick(lang.Active(), "en", "uk")
 		nc.FontScale = scale.Value()
+		// Only when the box was actually built. A Check that could not be
+		// created reads as unticked, and writing that would turn off an option
+		// the user was never shown; nc carries the stored value forward instead.
+		if pin != 0 {
+			nc.ForecastPinned = pin.Active()
+		}
 		if i := interval.Active(); i >= 0 && i < len(intervals) {
 			nc.UpdateInterval = intervals[i].minutes
 		}
-		nc.Save()
+		// The error is logged rather than swallowed: Save has eight ways to fail
+		// now that it writes through a temp file, and a silent failure here means
+		// the user's settings are gone on the next start with nothing to explain it.
+		if err := nc.Save(); err != nil {
+			log.Printf("settings: could not save the configuration: %v", err)
+		}
 		finish(&nc)
 	})
 	cancel := gtk.NewButton(l.CancelBtn(), func() { finish(nil) })

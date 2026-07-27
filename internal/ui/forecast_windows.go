@@ -9,7 +9,13 @@ package ui
 // was tried and reverted. The CHROME around it is the panel work and stays:
 // undecorated, off the taskbar, above other windows, translucent only where the
 // display can actually composite it, placed at the work-area corner nearest the
-// click, and dismissed by Escape, by focus loss, or by its own × button.
+// click - or at the position the caller remembers - draggable by its body, and
+// dismissed by Escape, by focus loss, or by its own × button.
+//
+// While the request is PINNED the first two dismissals are switched off, so the
+// × button and another click on the tray icon are the only ways out. The policy
+// is asked of gui.Forecast.Pinned at the moment of each event, never cached: the
+// user can uncheck the box while this very panel is on screen.
 //
 // Every metric is shared with the GTK backend value for value: the constants
 // below carry the same names and numbers as the ones in forecast_linux.go and
@@ -34,6 +40,12 @@ package ui
 // Content:        one UpdateLayeredWindow call. There is no WM_PAINT handler
 //                 and none is wanted - the system keeps the surface and
 //                 repaints it itself.
+// Dragging:       WM_LBUTTONDOWN hands the press to the system's own move loop.
+//                 NOT a WM_NCHITTEST that answers HTCAPTION, which looks like
+//                 the tidier trick and destroys the close button - panelWndProc
+//                 spells the reason out. That loop PUMPS THIS THREAD'S QUEUE
+//                 while it runs, so every dismissal path has to be re-entrancy
+//                 safe for its duration - see the moving flag.
 
 import (
 	"image"
@@ -42,11 +54,13 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/JastRedPanda/Nimbus/internal/fonts"
+	"github.com/JastRedPanda/Nimbus/internal/gui"
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/lxn/win"
@@ -189,16 +203,20 @@ func panelPaletteFor(dark, translucent bool) panelPalette {
 // The fetch runs on its own goroutine because the caller is the tray's single
 // menu-dispatch loop, and a blocking ten-second HTTP call there would freeze
 // Settings, About and Quit along with it.
-func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
+func showForecast(req gui.Forecast) {
 	// The pointer is sampled NOW, while the user's click is still fresh, rather
 	// than when the window is finally built: the fetch in between can take up
 	// to ten seconds, by which time the pointer may be on another monitor
 	// entirely. GetCursorPos has no thread affinity, so reading it here costs
 	// nothing.
+	//
+	// It is sampled even when req.At says where the panel goes, because At is
+	// only honoured if a monitor still contains it: the pointer is the fallback
+	// for the display that was unplugged since the position was remembered.
 	at, haveAt := pointerAnchor()
 
 	go func() {
-		l := i18n.ParseLang(lang)
+		l := i18n.ParseLang(req.Lang)
 
 		// Before the fetch, so a click that only closes the panel does not spend
 		// ten seconds on a result it will discard.
@@ -206,7 +224,7 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 			return
 		}
 
-		data, err := weather.FetchDaily(lat, lon)
+		data, err := weather.FetchDaily(req.Lat, req.Lon)
 		if err != nil || len(data) == 0 {
 			if err != nil {
 				log.Printf("forecast: fetch failed: %v", err)
@@ -217,7 +235,7 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 			return
 		}
 
-		p := newPanel(data, units, windUnit, theme, l)
+		p := newPanel(data, req, l)
 		p.run(at, haveAt)
 	}()
 }
@@ -227,11 +245,33 @@ func showForecast(lat, lon float64, units, lang, theme, windUnit string) {
 //
 // MessageBox runs its own modal message loop inside the call, so the goroutine
 // stays on its OS thread for the whole of it and needs no LockOSThread.
+// showError puts up one error box at a time, and drops the rest.
+//
+// MessageBox blocks the thread that calls it, so one thread cannot stack two -
+// but the panel, the settings window and the tray all run on threads of their own
+// and each can call this. Errors here arrive in bursts, one per failed fetch, and
+// a weather service that is down fails every attempt, so without the guard a
+// handful of clicks leaves a pile of identical boxes to dismiss one by one. The
+// GTK backend keeps a single dialog for the same reason.
+//
+// Owner is 0 deliberately: an owned box would be modal for a window on another
+// thread, which is a deadlock waiting to be found.
 func showError(msg string) {
+	if !errorBoxFree.CompareAndSwap(true, false) {
+		log.Printf("forecast: an error box is already on screen, dropping: %s", msg)
+		return
+	}
+	defer errorBoxFree.Store(true)
 	title := utf16Of("Nimbus")
 	t := utf16Of(msg)
 	win.MessageBox(0, &t[0], &title[0], win.MB_OK|win.MB_ICONERROR)
 }
+
+// errorBoxFree is true when no error box is on screen. It starts true, which is
+// what the init below is for - the zero value of atomic.Bool is false.
+var errorBoxFree atomic.Bool
+
+func init() { errorBoxFree.Store(true) }
 
 func forecastFailed(l i18n.Lang) string {
 	if l == i18n.UK {
@@ -292,6 +332,13 @@ type panel struct {
 	inst  win.HINSTANCE
 	title string
 
+	// req is kept whole rather than unpacked into fields because two of its
+	// members are callbacks that must be called LATER: Pinned on every Escape
+	// and every activation change, OnMove as the window closes. Copying their
+	// answers into the struct at construction time is exactly the bug the
+	// function-valued field exists to prevent.
+	req gui.Forecast
+
 	dark bool
 	pal  panelPalette
 	dpi  int32
@@ -326,12 +373,61 @@ type panel struct {
 	closing  bool
 	hover    bool
 	tracking bool
+	// reported keeps OnMove to one call. The panel can be told to close twice -
+	// a focus loss and the tray's own WM_CLOSE arrive independently - and the
+	// caller writes a config file for each report it gets.
+	reported bool
+	// handedOff records that a press was handed to the system's modal move loop at
+	// least once during this showing, and origin is where GetWindowRect said the
+	// window was at that FIRST handoff. Together they gate the position report, and
+	// neither half is enough on its own - see reportMove for the whole rule.
+	//
+	// Only the first handoff writes origin. A later press happens wherever the user
+	// has already dragged the panel to, so keeping the newest origin would make a
+	// drag followed by one idle click report nothing at all.
+	handedOff bool
+	origin    win.POINT
+	// moving is true from WM_ENTERSIZEMOVE until settleDrag clears it, which is the
+	// whole life of the system's modal move loop plus the instant it takes
+	// SendMessage to return. It switches the focus-loss dismissal off for exactly
+	// that long - see the WM_ACTIVATE case and settleDrag. Nothing else clears it,
+	// least of all WM_EXITSIZEMOVE, which arrives from inside the loop.
+	moving bool
+	// deferredInactive is a WA_INACTIVE that arrived while moving was set and has
+	// not been settled yet. settleDrag decides what becomes of it; a loop starting
+	// discards any that is somehow still pending, since WA_INACTIVE never repeats
+	// and a stale one could otherwise close the panel over a focus loss the user
+	// has long since resolved.
+	deferredInactive bool
+	// deferredClose is a WM_CLOSE that the move loop's own pump delivered while
+	// the drag was still on the stack. Unlike WA_INACTIVE this one is not a policy
+	// decision to weigh up later - it is an explicit dismissal that simply has to
+	// wait, because destroying the window from inside the system's move loop is
+	// the re-entrancy the moving flag exists to prevent.
+	//
+	// It is reachable even though the mouse button is down: closeOpenPanel posts
+	// WM_CLOSE from the tray's goroutine, so a second pointing device is enough.
+	// Tap the tray icon with a finger on a 2-in-1 while the mouse holds the drag,
+	// and the loop's pump dispatches it.
+	deferredClose bool
+	// byFocus says this panel is closing because it lost the foreground, and it
+	// is the only cause allowed to arm the tray toggle's grace period. The grace
+	// exists solely because a click on the notification area can take the
+	// foreground and close the panel before the click itself is delivered, so a
+	// click arriving just after such a close is the closing one rather than a new
+	// opening one. Arming it after a deliberate close - the x button, the toggle,
+	// Escape - answers a burst of taps with silence, which is exactly what a user
+	// reported. forecast_linux.go carries the same flag for the same reason.
+	byFocus bool
+	// moveRectFailed keeps the WM_MOVE diagnostic to one line per panel.
+	moveRectFailed bool
 }
 
-func newPanel(data []weather.DailyForecast, units, windUnit, theme string, l i18n.Lang) *panel {
-	dark := resolveDark(theme)
+func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *panel {
+	dark := resolveDark(req.Theme)
 	p := &panel{
 		title: l.ForecastTitle(),
+		req:   req,
 		dark:  dark,
 		// Provisional: show() replaces it once the display has been asked
 		// whether it will composite per-pixel alpha.
@@ -345,8 +441,8 @@ func newPanel(data []weather.DailyForecast, units, windUnit, theme string, l i18
 		// same in both languages.
 		row.cell[0] = d.Date
 		row.cell[colCond] = fonts.IconForCode(d.WeatherCode)
-		row.cell[2] = tempRange(d, units, l)
-		row.cell[3] = windSpeed(d, windUnit, l)
+		row.cell[2] = tempRange(d, req.Units, l)
+		row.cell[3] = windSpeed(d, req.WindUnit, l)
 		row.cell[4] = precip(d, l)
 		p.rows = append(p.rows, row)
 	}
@@ -378,8 +474,25 @@ func pointerAnchor() (win.POINT, bool) {
 // the pointer: the fetch in between can take ten seconds, and a monitor can be
 // plugged in or a taskbar moved in that time.
 func pointerWork(pt win.POINT) (win.RECT, bool) {
+	return workAreaAt(pt, win.MONITOR_DEFAULTTONEAREST)
+}
+
+// rememberedWork is the work area of the monitor that CONTAINS a remembered
+// position, and false when no monitor does.
+//
+// MONITOR_DEFAULTTONULL, not TONEAREST, and the difference is the whole point:
+// the position was saved on a desktop that may since have lost a display, and
+// the nearest monitor to a point on a monitor that no longer exists is a
+// perfectly reachable answer that would drag the panel to a corner of a screen
+// the user never put it on. A null answer is how the caller learns to fall back
+// to the pointer instead.
+func rememberedWork(pt win.POINT) (win.RECT, bool) {
+	return workAreaAt(pt, win.MONITOR_DEFAULTTONULL)
+}
+
+func workAreaAt(pt win.POINT, flags uint32) (win.RECT, bool) {
 	rc := win.RECT{Left: pt.X, Top: pt.Y, Right: pt.X + 1, Bottom: pt.Y + 1}
-	mon := monitorFromRect(&rc, win.MONITOR_DEFAULTTONEAREST)
+	mon := monitorFromRect(&rc, flags)
 	if mon == 0 {
 		return win.RECT{}, false
 	}
@@ -409,6 +522,35 @@ func panelCorner(px, py, w, h, margin int32, area win.RECT) (int32, int32) {
 	}
 	// A panel that has been shrunk as far as it will go can still be larger
 	// than the work area on a very small screen. Prefer showing its top-left.
+	if x < area.Left {
+		x = area.Left
+	}
+	if y < area.Top {
+		y = area.Top
+	}
+	return x, y
+}
+
+// clampToWork nudges a remembered position until the whole panel is inside the
+// work area, and answers where the panel should go.
+//
+// The right and bottom edges are pulled in first and the left and top second, so
+// that a panel too big for the work area - a remembered position carried onto a
+// far smaller screen, after the shrink-to-fit in build has already done what it
+// can - shows its top-left corner rather than its bottom-right. panelCorner
+// makes the same choice for the same reason.
+//
+// The caller must pass the size the panel WILL be, which is only known after
+// build: the shrink-to-fit retries can lower the effective DPI and with it every
+// dimension, and clamping against the first attempt's size would leave a panel
+// pushed further from the edge than it needs to be.
+func clampToWork(x, y, w, h int32, area win.RECT) (int32, int32) {
+	if r := area.Right - w; x > r {
+		x = r
+	}
+	if b := area.Bottom - h; y > b {
+		y = b
+	}
 	if x < area.Left {
 		x = area.Left
 	}
@@ -452,11 +594,16 @@ func claimPanel() bool {
 	return true
 }
 
-func releasePanel() {
+// releasePanel frees the singleton. byFocus arms the tray toggle's grace period
+// and must be true only for a close caused by losing the foreground - see the
+// panel field of the same name.
+func releasePanel(byFocus bool) {
 	panelMu.Lock()
 	panelBusy = false
 	panelHWND = 0
-	panelClosedAt = time.Now()
+	if byFocus {
+		panelClosedAt = time.Now()
+	}
 	panelMu.Unlock()
 }
 
@@ -522,7 +669,9 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		raisePanel()
 		return
 	}
-	defer releasePanel()
+	// byFocus is read at return time, not now: the WndProc sets it on this same
+	// thread when a focus loss is what closed the panel.
+	defer func() { releasePanel(p.byFocus) }()
 
 	// MANDATORY. A window's message queue belongs to the thread that created
 	// the window. An unlocked goroutine can be rescheduled onto another OS
@@ -592,8 +741,23 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		log.Printf("forecast: could not register the weather typeface; the symbol column will be blank")
 	}
 
+	// Which work area the layout is fitted to has to be settled BEFORE build,
+	// because build shrinks the layout to fit it. A remembered position can name
+	// a different monitor from the one the pointer is on, and fitting to the
+	// pointer's screen and then placing the window on a smaller one is how a
+	// panel ends up hanging off an edge.
 	work, haveWork := win.RECT{}, false
-	if haveAt {
+	remembered := win.POINT{}
+	haveRemembered := false
+	if p.req.At != nil {
+		remembered = win.POINT{X: int32(p.req.At.X), Y: int32(p.req.At.Y)}
+		work, haveRemembered = rememberedWork(remembered)
+		haveWork = haveRemembered
+		if !haveRemembered {
+			log.Print("forecast: the remembered position is on no current monitor; anchoring at the pointer instead")
+		}
+	}
+	if !haveWork && haveAt {
 		work, haveWork = pointerWork(at)
 	}
 
@@ -607,7 +771,13 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	}
 
 	p.x, p.y = 0, 0
-	if haveWork {
+	switch {
+	case haveRemembered:
+		// No edge margin here, unlike the corner anchor: the user put the panel
+		// exactly there, and moving it by panelEdgeGap would be the program
+		// second-guessing a position it was asked to reproduce.
+		p.x, p.y = clampToWork(remembered.X, remembered.Y, p.w, p.h, work)
+	case haveWork:
 		p.x, p.y = panelCorner(at.X, at.Y, p.w, p.h, scaleDPI(panelEdgeGap, p.dpi), work)
 	}
 
@@ -755,6 +925,78 @@ func (p *panel) release() {
 	p.img = nil
 }
 
+// pinned reports the dismissal policy AT THIS MOMENT.
+//
+// It is a call per event rather than a field, so unchecking the box in settings
+// applies to the panel already on screen. A nil Pinned means "not pinned", which
+// is the behaviour that existed before the option did, so every caller that does
+// not care about it gets it by writing nothing.
+//
+// It runs on the panel's own message-pump thread, inside a window procedure, so
+// the callback must not block: the tray satisfies that by answering from an
+// atomic mirror of the config rather than from behind a mutex.
+func (p *panel) pinned() bool {
+	return p.req.Pinned != nil && p.req.Pinned()
+}
+
+// reportMove hands the panel's final position to the caller.
+//
+// NOTHING IS REPORTED UNLESS THE USER ACTUALLY MOVED THE PANEL, which takes BOTH
+// of these: a press was handed to the system's move loop at least once during
+// this showing, and the window is no longer where GetWindowRect said it was at
+// that first handoff.
+//
+// The handoff alone is not enough, and that was the bug. A bare click on the
+// panel body is a handoff too - the press goes to the move loop whether or not the
+// pointer then moves - so a single stray click on a user's first ever forecast
+// reported the corner this code chose for it as though the user had picked it.
+// The caller then stops anchoring at the pointer, permanently, since it reads a
+// stored position as "put it back there" and the panel is pinned by default.
+//
+// The comparison is also what makes an ESCAPE-CANCELLED DRAG report nothing: the
+// system's move loop restores the window to where the drag began, so the two
+// reads come out equal even though a real drag happened.
+//
+// Both positions are read through GetWindowRect, never against the placement
+// computed in run(), and the GTK backend reads both of its positions through
+// gtk_window_get_position for the same reason: reading both the same way is what
+// makes the rule correct on Wayland, where that call always answers 0,0 and the
+// two reads are therefore equal, so nothing is persisted.
+//
+// It reads the position on the UI thread, where the window still exists -
+// GetWindowRect on a destroyed HWND answers nothing - and then delivers it from a
+// throwaway goroutine. The hand-off is deliberate: OnMove reaches into the
+// tray's configuration and writes a file, and doing that inline would hold up
+// WM_CLOSE, leaving the panel visibly on screen for as long as the disk takes.
+// A callback slow enough to matter can then never stall this window's queue, and
+// nothing it does can deadlock against a lock held by whoever is closing us. The
+// GTK backend promises the same thing, because gui.Forecast.OnMove states one
+// threading contract for every backend rather than one per backend.
+//
+// What the callback may assume, therefore: it is called at most once per panel
+// and only after the panel actually changed position under the user's hand, with
+// the window's screen position in the same coordinate space it handed over in At,
+// from an ARBITRARY goroutine, possibly after the panel has gone. It may not
+// touch this panel or any window; it may take locks and do I/O.
+func (p *panel) reportMove() {
+	if p.req.OnMove == nil || p.reported || !p.handedOff {
+		return
+	}
+	var rc win.RECT
+	if !win.GetWindowRect(p.hwnd, &rc) {
+		log.Print("forecast: GetWindowRect failed; the position was not remembered")
+		return
+	}
+	if rc.Left == p.origin.X && rc.Top == p.origin.Y {
+		// A handoff that moved nothing: a bare click on the body, or a drag the
+		// user cancelled with Escape and the system put back.
+		return
+	}
+	p.reported = true
+	onMove, x, y := p.req.OnMove, int(rc.Left), int(rc.Top)
+	go onMove(x, y)
+}
+
 func (p *panel) requestClose() {
 	if p.closing {
 		return
@@ -763,7 +1005,72 @@ func (p *panel) requestClose() {
 	// PostMessage rather than a direct DestroyWindow: the dismissal triggers
 	// include WM_ACTIVATE, and destroying a window from inside the system's own
 	// activation handling is re-entrant in a way nothing documents as safe.
+	//
+	// Posting is not enough on its own while the system's move loop is running,
+	// because that loop pumps this thread's queue and would dispatch the posted
+	// WM_CLOSE itself. That is what the moving flag is for; requestClose is
+	// deliberately not the place to check it, since the caller is the one that
+	// knows whether it can afford to wait.
 	win.PostMessage(p.hwnd, win.WM_CLOSE, 0, 0)
+}
+
+// settleDrag disposes of a deactivation that arrived while the system's move
+// loop was running, and MUST be called with the loop off the stack.
+//
+// THE CHOICE, stated once: the deferred deactivation is honoured only if the
+// panel is still not the foreground window now that the drag is over, and
+// dropped otherwise.
+//
+// Dropping it outright would be wrong. WA_INACTIVE during a drag comes from
+// something taking the foreground with the mouse button still down - Win+L,
+// Ctrl+Alt+Del, Win+D, a toast, a UAC prompt - and WA_INACTIVE is delivered on
+// the TRANSITION, so a panel that is already inactive is never told again unless
+// it is activated first. An unpinned panel would then be a topmost window over
+// whatever the user switched to, with only its × button and the tray icon left
+// to dismiss it, which is the opposite of what "closes when you look away"
+// promised.
+//
+// Honouring it unconditionally would be equally wrong: the ordinary end of a
+// drag hands the foreground straight back, and closing then would make the panel
+// vanish the instant the user let go of it. So the foreground is re-read rather
+// than assumed, and pinned is asked again as well, because the policy is read at
+// the moment of the event and the close is the event now.
+func (p *panel) settleDrag() {
+	// THE ONLY PLACE the flag is cleared. WM_EXITSIZEMOVE deliberately leaves it
+	// alone because that message arrives from inside the loop, which can still pump
+	// afterwards; here the loop is provably off the stack because the SendMessage
+	// that started it has returned. Clearing unconditionally rather than only when
+	// something was deferred: a loop that somehow never sent WM_ENTERSIZEMOVE
+	// leaves nothing to clear, and one that never let go of the flag would leave
+	// the panel immune to focus loss for the rest of its life.
+	p.moving = false
+
+	if p.deferredClose {
+		// An explicit dismissal outranks any judgement about the foreground, so it
+		// is settled first and nothing else is considered. PostMessage directly
+		// rather than through requestClose: requestClose already set closing when it
+		// posted the WM_CLOSE that got deferred, so it would refuse to post a second
+		// time and the panel would stay up for good.
+		p.deferredClose = false
+		p.deferredInactive = false
+		win.PostMessage(p.hwnd, win.WM_CLOSE, 0, 0)
+		return
+	}
+
+	if !p.deferredInactive {
+		return
+	}
+	p.deferredInactive = false
+	if p.pinned() {
+		return
+	}
+	if win.GetForegroundWindow() == p.hwnd {
+		log.Print("forecast: the foreground came back when the drag ended; staying open")
+		return
+	}
+	log.Print("forecast: closing, the foreground was taken during the drag")
+	p.byFocus = true
+	p.requestClose()
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,18 +1495,50 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		// deliberately absent from the message loop: there are no controls to
 		// navigate and it would swallow keys.
 		if wParam == win.VK_ESCAPE {
-			p.requestClose()
+			// A pinned panel swallows Escape rather than passing it on: there is
+			// nothing else in this window that wants the key, and the point of
+			// the option is that a stray Escape aimed at another window cannot
+			// take the forecast down with it.
+			if !p.pinned() {
+				p.requestClose()
+			}
 			return 0
 		}
 
 	case win.WM_ACTIVATE:
 		if win.LOWORD(uint32(wParam)) == win.WA_INACTIVE {
-			if p.armed {
+			// Pinned is checked here and not once at open time so that
+			// unchecking the box in settings applies to this window: the
+			// settings window itself takes the activation, and this is the
+			// message that would otherwise have closed the panel underneath it.
+			if p.armed && !p.pinned() {
+				if p.moving {
+					// RE-ENTRANCY, and the one hazard this window has that
+					// nothing else in it does. The system's move loop pumps this
+					// thread's queue while it runs, so it is the loop's own pump
+					// that delivered this WA_INACTIVE, and it is the loop's own
+					// pump that would dispatch the WM_CLOSE requestClose posts:
+					// DestroyWindow and the GDI release would run inside the
+					// system's move loop with the WM_LBUTTONDOWN frame that
+					// started it still on the stack, and by the time SendMessage
+					// returned the surfaces would be freed and the live-window
+					// entry gone. That is exactly the re-entrancy requestClose
+					// exists to avoid, reopened by the drag.
+					//
+					// It cannot be a genuine click-away either: the drag holds
+					// the mouse, so the press that would have landed on another
+					// window has not happened. Deferring costs nothing that a
+					// user can perceive - see settleDrag for what becomes of it.
+					p.deferredInactive = true
+					log.Print("forecast: focus lost during a drag; deferring the close until the move loop ends")
+					return 0
+				}
 				// Any window taking activation lands here, not just one the
 				// user clicked - a notification or a background window will
 				// close the panel too. The line is here because an unexplained
 				// disappearance is otherwise indistinguishable from a crash.
 				log.Print("forecast: closing, focus lost")
+				p.byFocus = true
 				p.requestClose()
 			}
 			return 0
@@ -1241,6 +1580,143 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		}
 		return 0
 
+	case win.WM_LBUTTONDOWN:
+		// Dragging. A press anywhere on the body except the close button is
+		// handed to the system's own modal move loop, which is what a title bar
+		// does with a press on itself: ReleaseCapture to give up the implicit
+		// capture this very message granted - the loop cannot start while
+		// another window holds the mouse - and then WM_NCLBUTTONDOWN with
+		// HTCAPTION, which is precisely the message DefWindowProc turns into a
+		// move. What the user expects of a drag comes free that way: the Escape
+		// that cancels it and puts the window back where it started, the Alt-Tab
+		// that interrupts it. Reimplementing it with SetCapture and WM_MOUSEMOVE
+		// gives up both and gains nothing, because the window's position is
+		// re-read from GetWindowRect on WM_MOVE either way.
+		//
+		// What does NOT come free, and was claimed here in error: Aero Snap.
+		// Windows offers edge snapping only for windows it considers resizable,
+		// and this is a WS_POPUP with neither WS_THICKFRAME nor WS_MAXIMIZEBOX,
+		// so dragging it against an edge snaps to nothing.
+		//
+		// NOT a WM_NCHITTEST that answers HTCAPTION for the whole client area,
+		// which is the shortcut every Win32 sample reaches for. It declares the
+		// entire window a caption, and a caption does not deliver WM_LBUTTONUP,
+		// WM_MOUSEMOVE or WM_MOUSELEAVE to the client area at all: the close
+		// button stops closing and its hover highlight stops appearing, and both
+		// failures look like a painting bug rather than a hit-testing one.
+		//
+		// SendMessage, not PostMessage: the move loop must run inside this
+		// message's own handling, while the button is still physically down.
+		//
+		// The close button is excluded HERE, at press time, rather than tidied up
+		// afterwards, because the move loop consumes the matching WM_LBUTTONUP -
+		// the button release is what ends the loop, and it is never delivered to
+		// this window procedure. A drag started on the × would therefore swallow
+		// the click that was meant to close the panel, and no amount of
+		// bookkeeping in WM_LBUTTONUP can recover an event that never arrives.
+		x, y := clientPoint(lParam)
+		if rectContains(p.geom.closeBox, x, y) {
+			return 0
+		}
+		// The first handoff of this showing records where the window is right now,
+		// through GetWindowRect - the same call reportMove compares against once the
+		// panel closes. The handoff on its own says nothing about whether the user
+		// placed the panel anywhere: this very message is delivered for a bare click
+		// on the body as well, and the press is handed to the move loop either way.
+		// It takes the comparison to tell the two apart, and to discount a drag the
+		// user cancels with Escape. See reportMove.
+		//
+		// A GetWindowRect that fails leaves handedOff clear, so a later press can
+		// still establish an origin; the drag itself proceeds regardless, because
+		// being unable to remember a position is no reason to refuse to move.
+		if !p.handedOff {
+			var rc win.RECT
+			if win.GetWindowRect(hwnd, &rc) {
+				p.handedOff = true
+				p.origin = win.POINT{X: rc.Left, Y: rc.Top}
+			} else {
+				log.Print("forecast: GetWindowRect failed at the drag hand-off; this drag will not be remembered")
+			}
+		}
+		win.ReleaseCapture()
+		win.SendMessage(hwnd, win.WM_NCLBUTTONDOWN, win.HTCAPTION, 0)
+		// SendMessage has returned, so the system's move loop is provably off the
+		// stack and a WM_CLOSE can no longer be dispatched from inside it. This -
+		// not WM_EXITSIZEMOVE, which the loop sends while it is still running - is
+		// the earliest place a deferred dismissal is safe to act on.
+		p.settleDrag()
+		return 0
+
+	case win.WM_ENTERSIZEMOVE:
+		// The system's modal move loop has started. It runs a message pump of its
+		// own on this thread until the drag ends, and while it does, WA_INACTIVE
+		// must not close the panel - the WM_ACTIVATE case above says why.
+		//
+		// Two dismissals need holding back, and only two. WA_INACTIVE is one; the
+		// WM_CLOSE that closeOpenPanel posts from the tray's goroutine is the other,
+		// and the WM_CLOSE case holds it the same way. It is tempting to argue that
+		// one cannot arrive during a drag - the notification area needs a click, and
+		// clicking means letting go of the button - but that assumes a single
+		// pointing device. A finger on a 2-in-1, a pen, or injected input all reach
+		// the tray while the mouse still holds the drag.
+		//
+		// Escape needs nothing: it goes to the loop itself and cancels the move
+		// rather than reaching this window procedure. Neither does the close button,
+		// which cannot be clicked while the button is already down.
+		p.moving = true
+		// Any deferral still pending belongs to an earlier loop that was never
+		// settled, and this loop's settleDrag would otherwise act on it - closing
+		// the panel over a focus loss the user resolved long ago. WA_INACTIVE is
+		// delivered on the TRANSITION and never repeats, so a stranded deferral can
+		// never be corrected by a later message either; discarding it here is the
+		// only cheap correction available.
+		//
+		// Latent today, and worth saying why rather than pretending it cannot
+		// happen: settleDrag runs after every loop THIS code starts, immediately
+		// after the SendMessage in WM_LBUTTONDOWN, and the only other way into a
+		// move loop is the Alt+Space window menu, which a WS_POPUP without
+		// WS_SYSMENU does not have. A loop entered from anywhere else would strand
+		// both this flag and moving, since settleDrag is the only settler.
+		p.deferredInactive = false
+		return 0
+
+	case win.WM_EXITSIZEMOVE:
+		// Deliberately does NOT clear the moving flag. This is sent as the loop
+		// unwinds but STILL FROM INSIDE IT, and the loop can pump more messages
+		// before the SendMessage in WM_LBUTTONDOWN returns: a WA_INACTIVE arriving
+		// in that window would find moving already false, post WM_CLOSE, and the
+		// loop's own pump could dispatch DestroyWindow inside itself - the exact
+		// re-entrancy the flag was added to close. settleDrag is the only settler,
+		// it clears the flag unconditionally the moment SendMessage returns, and
+		// that is the earliest point at which the loop is provably off the stack.
+		// Clearing here would buy nothing and is pure exposure.
+		return 0
+
+	case win.WM_MOVE:
+		// The move loop repositions the window behind this code's back, and
+		// p.x/p.y are what push() hands UpdateLayeredWindow as the DESTINATION of
+		// every repaint. Left stale, the next hover redraw would teleport the
+		// panel back to where it opened. Reading the window rect rather than
+		// unpacking lParam keeps this independent of the client-origin equality
+		// that only holds because the window has no frame.
+		var rc win.RECT
+		if win.GetWindowRect(hwnd, &rc) {
+			p.x, p.y = rc.Left, rc.Top
+		} else if !p.moveRectFailed {
+			// Two visible failures from one swallowed error, which is why this is
+			// the one GetWindowRect in this file that must not fail quietly: the
+			// next hover repaint pushes the stale destination and drags the panel
+			// back to where it opened, and since that is also the recorded origin,
+			// the drag then reports nothing when the panel closes.
+			//
+			// Once per panel, not once per message: WM_MOVE arrives dozens of times
+			// a second while the window is being dragged, and whatever makes this
+			// call fail will make all of them fail.
+			p.moveRectFailed = true
+			log.Print("forecast: GetWindowRect failed on WM_MOVE; the panel may snap back on the next repaint")
+		}
+		return 0
+
 	case win.WM_LBUTTONUP:
 		// Hit testing on a layered window follows the alpha channel: the four
 		// rounded corners, where the alpha is zero, let a click through to
@@ -1257,6 +1733,19 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return 1
 
 	case win.WM_CLOSE:
+		// Every dismissal funnels through here - Escape, focus loss, the close
+		// button, and the tray's own PostMessage in closeOpenPanel - which makes
+		// it the one place the final position can be read while the window still
+		// exists. WM_DESTROY would be too late for GetWindowRect to mean
+		// anything.
+		if p.moving {
+			// Dispatched by the move loop's own pump, with the drag still on the
+			// stack. Destroying the window here would free the surfaces underneath
+			// the loop that is driving this very HWND. Hold it until settleDrag.
+			p.deferredClose = true
+			return 0
+		}
+		p.reportMove()
 		win.DestroyWindow(hwnd)
 		return 0
 

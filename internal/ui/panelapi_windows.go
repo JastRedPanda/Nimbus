@@ -16,6 +16,15 @@ package ui
 // its own user32DLL/gdi32DLL and this file must not depend on names another
 // file owns. LoadLibrary is reference counted, so a second lazy handle to
 // user32.dll costs nothing.
+//
+// What is deliberately NOT here: the panel's drag path needs ReleaseCapture,
+// GetWindowRect, WM_NCLBUTTONDOWN and HTCAPTION to start the move loop,
+// WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE to know that the loop is running and
+// GetForegroundWindow to settle a deactivation that arrived while it was, and the
+// settings dialog's checkbox needs BS_AUTOCHECKBOX. All eight are present in the
+// pinned lxn/win, so a hand binding would be a second, divergent declaration of
+// something that already works. Check the module source before adding to this
+// file, the same way the entries below were checked.
 
 import (
 	"runtime"

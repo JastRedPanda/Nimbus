@@ -117,7 +117,7 @@ func (l Lang) UnitLabel(unit string) string {
 	return "Temperature: " + sym
 }
 
-func (l Lang) Celsius() string { return "°C" }
+func (l Lang) Celsius() string    { return "°C" }
 func (l Lang) Fahrenheit() string { return "°F" }
 
 func (l Lang) PressureUnitLabel(unit string) string {
@@ -461,6 +461,13 @@ func (l Lang) FontScalePct() string {
 		return "%"
 	}
 	return "%"
+}
+
+func (l Lang) PinForecast() string {
+	if l == UK {
+		return "Закривати лише кліком по іконці"
+	}
+	return "Close only from the tray icon"
 }
 
 func (l Lang) CityLabel() string {

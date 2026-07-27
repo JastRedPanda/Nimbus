@@ -20,6 +20,7 @@ Languages: English, Українська
 - Update interval: 5 min – 24 hours
 - Window theme: Auto / Dark / Light
 - Language: English / Українська
+- **Pinned forecast panel** - closes only from the tray icon or the close button, and remembers where it was dragged / Панель прогнозу закривається лише кліком по іконці в треї або кнопкою закриття та запамʼятовує місце, куди її перетягнули
 - No console window (Windows) / Без консольного вікна (Windows)
 
 ## Download / Завантажити
@@ -100,6 +101,41 @@ Fields / Поля:
 - Language (English / Українська)
 - Font scale 1–100% for tray text / Масштаб шрифту в треї
 - Update interval (5 min – 24 h) / Інтервал оновлення
+- Close the forecast panel only from the tray icon / Закривати панель прогнозу лише кліком по іконці
+
+#### Forecast panel behaviour / Поведінка панелі прогнозу
+
+**Enabled by default.** The option governs one thing: what may dismiss the panel.
+With it on, the panel ignores `Esc` and keeps standing when it loses focus, so it
+closes only from the tray icon or its own close button. Turn it off and `Esc` or a
+click elsewhere dismisses it again, as before.
+
+The panel is draggable by any part of its body, and where you put it is remembered
+either way - the option has no say in that. The position is stored in `forecast_x`
+/ `forecast_y` and written only after an actual drag, so a panel you have never
+moved keeps appearing at the corner nearest the pointer.
+
+**Увімкнено за замовчуванням.** Опція керує лише одним: чим можна закрити панель.
+Коли вона увімкнена, панель ігнорує `Esc` і не зникає, втративши фокус, - закрити
+її можна лише кліком по іконці в треї або кнопкою закриття. Вимкніть її, і `Esc`
+або клік поза панеллю знову її закриють, як раніше.
+
+Панель можна тягнути за будь-яке місце, і те, куди ви її поставили,
+запамʼятовується незалежно від опції. Позиція зберігається в `forecast_x` /
+`forecast_y` і записується лише після реального перетягування, тому панель, яку
+жодного разу не переміщали, і далі зʼявляється біля найближчого до курсора кута.
+
+The browser fallback (used when the GTK libraries are missing) has no checkbox for
+this option and no draggable panel, so there `forecast_pinned` and the remembered
+position keep whatever the config file holds and can only be changed by editing
+that file. / Резервна
+веб-форма (використовується, коли бібліотеки GTK відсутні) не має ні цієї галочки,
+ні панелі, яку можна перетягувати, тому там `forecast_pinned` зберігає значення з
+файлу конфігурації та змінюється лише редагуванням цього файлу.
+
+_After an upgrade the panel stops closing on `Esc` and on focus loss - this is the
+new default, not a bug. / Після оновлення панель більше не закривається по `Esc`
+та при втраті фокуса - це нове типове значення, а не помилка._
 
 ### Configuration / Конфігурація
 
@@ -120,9 +156,15 @@ Auto-created at first run:
   "wind_unit": "ms",
   "icon_theme": "auto",
   "language": "en",
-  "font_scale": 100
+  "font_scale": 100,
+  "forecast_pinned": true
 }
 ```
+
+`forecast_x` and `forecast_y` are absent until the panel is dragged for the first
+time; while they are absent the panel opens next to the pointer.  
+`forecast_x` та `forecast_y` відсутні, доки панель не перетягнули вперше; поки їх
+немає, панель відкривається біля курсора.
 
 | Field | Values | Description |
 |---|---|---|
@@ -135,6 +177,8 @@ Auto-created at first run:
 | `icon_theme` | `auto` / `dark` / `light` | Window theme / Тема вікон |
 | `language` | `en` / `uk` | UI language / Мова інтерфейсу |
 | `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
+| `forecast_pinned` | bool (default `true`) | Forecast panel closes only from the tray icon or the close button / Панель прогнозу закривається лише кліком по іконці в треї або кнопкою закриття |
+| `forecast_x`, `forecast_y` | int, optional | Remembered panel position; absent until it is dragged / Запамʼятована позиція панелі; відсутня, доки її не перетягнули |
 
 ## Weather API / API погоди
 
