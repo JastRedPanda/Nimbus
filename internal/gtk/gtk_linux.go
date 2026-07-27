@@ -1629,19 +1629,6 @@ func NewFrame(title string, child uintptr) uintptr {
 	return f
 }
 
-// NewScrolled puts child in a viewport that scrolls vertically and is at least
-// minHeight tall.
-//
-// Horizontal scrolling is off deliberately. With NEVER, GTK asks for the width
-// the widest row needs and the window is sized to fit its content; with
-// AUTOMATIC a long city name would instead hide behind a scrollbar the user has
-// to discover. The minimum content height does the other half of the job: it
-// stops the list collapsing to nothing while it is empty, and stops twenty
-// results from growing the window past the screen.
-//
-// A GtkBox is not scrollable, and gtk_container_add wraps such a child in the
-// GtkViewport it needs. That has been automatic since GTK 3.8; this package
-// needs a far newer GTK 3 than that for other reasons.
 // NewScrolledPage wraps a whole window page so that it scrolls only when it has
 // to. propagate-natural-height makes the scroller ask for exactly the height its
 // child wants, so a page that fits looks and measures as though there were no
@@ -1668,6 +1655,19 @@ func NewScrolledPage(child uintptr, maxHeight int) uintptr {
 	return sw
 }
 
+// NewScrolled puts child in a viewport that scrolls vertically and is at least
+// minHeight tall.
+//
+// Horizontal scrolling is off deliberately. With NEVER, GTK asks for the width
+// the widest row needs and the window is sized to fit its content; with
+// AUTOMATIC a long city name would instead hide behind a scrollbar the user has
+// to discover. The minimum content height does the other half of the job: it
+// stops the list collapsing to nothing while it is empty, and stops twenty
+// results from growing the window past the screen.
+//
+// A GtkBox is not scrollable, and gtk_container_add wraps such a child in the
+// GtkViewport it needs. That has been automatic since GTK 3.8; this package
+// needs a far newer GTK 3 than that for other reasons.
 func NewScrolled(child uintptr, minHeight int) uintptr {
 	sw := scrolledNew(0, 0)
 	scrolledPolicy(sw, policyNever, policyAutomatic)

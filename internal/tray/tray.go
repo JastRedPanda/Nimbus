@@ -3,8 +3,6 @@ package tray
 import (
 	"fmt"
 	"log"
-	"os/exec"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -306,15 +304,4 @@ func (a *app) openSettings() {
 		}
 		a.fetchAndUpdate()
 	}()
-}
-
-func (a *app) openURL(url string) {
-	switch runtime.GOOS {
-	case "windows":
-		exec.Command("cmd", "/c", "start", url).Start()
-	case "darwin":
-		exec.Command("open", url).Start()
-	default:
-		exec.Command("xdg-open", url).Start()
-	}
 }

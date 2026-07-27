@@ -198,8 +198,16 @@ func choose() Backend {
 				log.Printf("gui: using backend %q (forced by %s)", f.Name, EnvBackend)
 				return b
 			}
-			log.Printf("gui: backend %q was forced but could not start", forced)
-			return nil
+			// The null backend, not nil. nullBackend's own doc promises Current
+			// never returns nil precisely because a caller that has to nil-check
+			// the GUI will eventually forget, and this was the one path that broke
+			// that promise: a forced backend that failed to open cached a nil
+			// interface, and the next tray click dereferenced it. The forced name
+			// is still honoured in the sense that matters - no silent fallback to
+			// a DIFFERENT drawing backend, which is what the probe skip above is
+			// about; the null backend draws nothing and says so.
+			log.Printf("gui: backend %q was forced but could not start; nothing will be drawn", forced)
+			return nullBackend{}
 		}
 		log.Printf("gui: unknown backend %q, ignoring %s (known: %s)", forced, EnvBackend, names(sorted))
 	}
@@ -213,7 +221,10 @@ func choose() Backend {
 			return b
 		}
 	}
-	return nil
+	// Unreachable while the null backend is registered - it probes true and always
+	// opens - but stated rather than assumed, for the same reason as above.
+	log.Print("gui: no backend could be opened at all; nothing will be drawn")
+	return nullBackend{}
 }
 
 func names(fs []Factory) string {

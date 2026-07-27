@@ -306,11 +306,15 @@ func TestSaveKeepsFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0644 {
-		t.Errorf("new config mode = %v, want 0644", fi.Mode().Perm())
+	// 0600, not 0644: this file holds the user's home coordinates, and the log file
+	// written beside it has always been 0600.
+	if fi.Mode().Perm() != 0600 {
+		t.Errorf("new config mode = %v, want 0600 - the file holds the user's coordinates", fi.Mode().Perm())
 	}
 
-	if err := os.Chmod(path, 0600); err != nil {
+	// And a mode the user chose is preserved rather than reimposed. 0644 makes the
+	// assertion meaningful now that 0600 is also the default.
+	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
 	if err := Default().Save(); err != nil {
@@ -320,8 +324,8 @@ func TestSaveKeepsFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0600 {
-		t.Errorf("config mode = %v after re-saving a 0600 file, want 0600", fi.Mode().Perm())
+	if fi.Mode().Perm() != 0644 {
+		t.Errorf("config mode = %v after re-saving a 0644 file, want 0644 - an existing mode must survive", fi.Mode().Perm())
 	}
 }
 

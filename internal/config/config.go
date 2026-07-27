@@ -145,10 +145,16 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	// Preserve whatever mode the file already has; 0644 only decides the mode of
-	// a config being created for the first time. CreateTemp makes the temp file
-	// 0600, so the mode has to be set explicitly either way.
-	mode := os.FileMode(0644)
+	// Preserve whatever mode the file already has; 0600 only decides the mode of a
+	// config being created for the first time. CreateTemp makes the temp file 0600,
+	// so the mode has to be set explicitly either way.
+	//
+	// 0600 rather than 0644 because of what is in here: the user's home coordinates
+	// to four decimal places and their city. The log file written into this same
+	// directory has always been 0600, so the two now agree about the same data, and
+	// on any host where ~/.config is traversable - which several distributions leave
+	// it at - the old mode let every local account read where the user lives.
+	mode := os.FileMode(0600)
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
 	}

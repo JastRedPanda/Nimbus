@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
@@ -55,4 +57,20 @@ func windSpeed(d weather.DailyForecast, windUnit string, l i18n.Lang) string {
 // precip is the Precip column, e.g. "0.3 мм".
 func precip(d weather.DailyForecast, l i18n.Lang) string {
 	return fmt.Sprintf("%.1f %s", d.PrecipSum, l.PrecipUnit())
+}
+
+// parseCoord keeps the previous value when the field holds nonsense, rather than
+// silently moving the user to the Gulf of Guinea.
+//
+// Untagged, and deliberately so: it was written twice, once per settings window,
+// and the two copies drifted - only the Win32 one trimmed whitespace, so a
+// coordinate pasted with padding was accepted on Windows and silently discarded on
+// Linux. Trimming is the behaviour worth keeping, since a pasted value is exactly
+// where the padding comes from.
+func parseCoord(s string, fallback float64) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return fallback
+	}
+	return v
 }

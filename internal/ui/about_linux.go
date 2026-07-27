@@ -37,7 +37,7 @@ var (
 	aboutWindow gtk.Window
 )
 
-// ShowAbout opens the About window and returns immediately; the window is
+// showAbout opens the About window and returns immediately; the window is
 // built on the GTK main loop thread.
 func showAbout(theme string) {
 	// No GTK check here: choosing a backend is internal/gui's job, and this

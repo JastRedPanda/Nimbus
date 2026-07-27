@@ -759,7 +759,6 @@ func forecastTable(data []weather.DailyForecast, units, windUnit string, l i18n.
 	for i, d := range data {
 		if i > 0 {
 			sep := gtk.NewHSeparator()
-			gtk.AddClass(sep, "rowsep")
 			grid.Attach(sep, 0, row, cols, 1)
 			row++
 		}
@@ -936,6 +935,18 @@ func corner(px, py, w, h int, area gtk.Rect) (int, int) {
 	y := area.Y + panelMargin
 	if py > area.Y+area.H/2 {
 		y = area.Y + area.H - h - panelMargin
+	}
+	// Clamped to the work area's own origin, which is what forecast_windows.go's
+	// panelCorner does and this did not. A panel wider or taller than the work area
+	// - a small screen, or a text-scaling factor that grows the table - otherwise
+	// gets a negative origin from the arithmetic above and opens with its header row
+	// and first days off the top or left edge, where nothing clamps it afterwards.
+	// Showing the top-left corner of an oversized panel is the lesser evil.
+	if x < area.X {
+		x = area.X
+	}
+	if y < area.Y {
+		y = area.Y
 	}
 	return x, y
 }

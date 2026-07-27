@@ -49,8 +49,8 @@ const (
 	aboutBtnW = aboutContentW / 3
 	aboutBtnH = 26
 
-	// ID_ABOUT_OK is this window's only control. The settings dialog's ids run to
-	// 123 in its own window and cannot collide - WM_COMMAND is delivered to the
+	// ID_ABOUT_OK is this window's only control. The settings dialog's ids stay
+	// below 200 in its own window and cannot collide - WM_COMMAND is delivered to the
 	// parent, and these are different parents - but the numbering is kept clear of
 	// them anyway so a future shared helper cannot be caught out.
 	ID_ABOUT_OK = 200
@@ -491,7 +491,7 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 
 // text draws one run inside a rectangle given in device pixels.
 func (d *aboutDlg) text(hdc win.HDC, s string, left, top, right, height int32, format uint32) {
-	t := syscall.StringToUTF16(s)
+	t := utf16Of(s)
 	rc := win.RECT{Left: left, Top: top, Right: right, Bottom: top + height}
 	win.DrawTextEx(hdc, &t[0], -1, &rc, format, nil)
 }

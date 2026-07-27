@@ -113,6 +113,7 @@ import (
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/lxn/win"
+	"golang.org/x/image/vector"
 )
 
 // Layout, in the same units the GTK side uses: logical pixels at 96 DPI, scaled
@@ -274,6 +275,21 @@ func panelPaletteFor(dark, translucent bool) panelPalette {
 // values means paint() takes the square-corner path and roundRect declines the
 // hover pill on its own alpha check rather than on a second flag.
 //
+// highContrastOn reports whether a high contrast scheme is active.
+//
+// It is asked before the dark-apps switch: a high contrast scheme is expressed
+// entirely in the classic system colours, so it is the one case where GetSysColor
+// is the right answer even though Windows also reports the apps as dark.
+func highContrastOn() bool {
+	hc := win.HIGHCONTRAST{CbSize: uint32(unsafe.Sizeof(win.HIGHCONTRAST{}))}
+	if !win.SystemParametersInfo(win.SPI_GETHIGHCONTRAST, hc.CbSize, unsafe.Pointer(&hc), 0) {
+		// Not an error worth a log line: every Windows this runs on answers it, and
+		// a machine that does not is not in high contrast either.
+		return false
+	}
+	return hc.DwFlags&win.HCF_HIGHCONTRASTON != 0
+}
+
 // THE ONE WART, and the reason this is not four lines of GetSysColor.
 // GetSysColor predates dark mode entirely: it answers from the classic colour
 // scheme, the one SetSysColors and High Contrast drive, and it was never wired
@@ -298,21 +314,6 @@ func panelPaletteFor(dark, translucent bool) panelPalette {
 // explicitly told the system what colours they need in order to read the screen,
 // and the app would answer with its own. High Contrast Black also sets apps to
 // dark, so without this check the dark branch would swallow it.
-// highContrastOn reports whether a high contrast scheme is active.
-//
-// It is asked before the dark-apps switch: a high contrast scheme is expressed
-// entirely in the classic system colours, so it is the one case where GetSysColor
-// is the right answer even though Windows also reports the apps as dark.
-func highContrastOn() bool {
-	hc := win.HIGHCONTRAST{CbSize: uint32(unsafe.Sizeof(win.HIGHCONTRAST{}))}
-	if !win.SystemParametersInfo(win.SPI_GETHIGHCONTRAST, hc.CbSize, unsafe.Pointer(&hc), 0) {
-		// Not an error worth a log line: every Windows this runs on answers it, and
-		// a machine that does not is not in high contrast either.
-		return false
-	}
-	return hc.DwFlags&win.HCF_HIGHCONTRASTON != 0
-}
-
 func panelPaletteSystem(dark bool) panelPalette {
 	if dark {
 		// The solid half of the dark palette: opaque sheet, square corners.
@@ -593,6 +594,10 @@ type panel struct {
 	byFocus bool
 	// moveRectFailed keeps the WM_MOVE diagnostic to one line per panel.
 	moveRectFailed bool
+	// raster is reused by every roundRect call this panel makes, because a fresh
+	// rasterizer per call costs 1.64 MB and about 5 ms of the repaint that runs
+	// inside the window procedure - see roundRect.
+	raster *vector.Rasterizer
 	// paintFailed does the same for the WM_PAINT diagnostic, and for a stronger
 	// reason: a window whose BeginPaint fails is asked to paint again immediately,
 	// so an ungated line there is not a log entry but a log flood.
@@ -708,8 +713,6 @@ func (p *panel) frame() (w, h int32) {
 // clampToWork both reason about the window's edges against the work area, and
 // SetWindowPos is given a window rect. build's shrink-to-fit has to account for
 // it too - see build.
-// windowSize is the outer size for a client area of p.w by p.h.
-//
 // One consequence worth writing down, because it is invisible until a user
 // switches looks: everything this file remembers as "the position" is
 // GetWindowRect's, which is the FRAME in the system look and the window itself in
@@ -1270,6 +1273,7 @@ func (p *panel) release() {
 	p.surf = nil
 	p.mask = nil
 	p.img = nil
+	p.raster = nil
 }
 
 // pinned reports the dismissal policy AT THIS MOMENT.
@@ -1524,6 +1528,10 @@ func (p *panel) build(work win.RECT, haveWork bool) bool {
 	}
 
 	p.img = image.NewRGBA(image.Rect(0, 0, int(p.w), int(p.h)))
+	// One rasterizer for the panel's whole life. Reset sizes it per shape and grows
+	// its buffer if it ever has to, so allocating it at the sheet's size - the
+	// largest shape drawn - means the hover repaint allocates nothing at all.
+	p.raster = vector.NewRasterizer(int(p.w), int(p.h))
 	p.surf = newSurface(int(p.w), int(p.h))
 	p.mask = newSurface(int(p.w), int(p.h))
 	if p.surf == nil || p.mask == nil {
@@ -1805,7 +1813,7 @@ func (p *panel) paint() {
 	s := func(v int) int32 { return scaleDPI(v, p.dpi) }
 
 	if r := s(p.pal.radiusPt); r > 0 {
-		roundRect(p.img, g.sheet.Left, g.sheet.Top,
+		roundRect(p.raster, p.img, g.sheet.Left, g.sheet.Top,
 			g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top,
 			float32(r), p.pal.sheet)
 	} else {
@@ -1821,7 +1829,7 @@ func (p *panel) paint() {
 	// zero closeBox - the pill would, but drawTextGroup would still clear the mask,
 	// flush GDI and composite a blank full-surface pass for a run it then skips.
 	if p.hover && !p.sysLook {
-		roundRect(p.img, g.closeBox.Left, g.closeBox.Top,
+		roundRect(p.raster, p.img, g.closeBox.Left, g.closeBox.Top,
 			g.closeBox.Right-g.closeBox.Left, g.closeBox.Bottom-g.closeBox.Top,
 			float32(s(closeRadiusPt)), p.pal.hoverFill)
 	}

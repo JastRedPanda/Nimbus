@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -283,6 +281,10 @@ func (d *setDlg) run() {
 
 	// The window is created at a placeholder size and hidden: its DPI cannot
 	// be asked for until it exists, and its real size depends on the answer.
+	// syscall.StringToUTF16 rather than utf16Of: this one is a compiled-in caption
+	// from internal/i18n, so it cannot contain the NUL byte that makes the former
+	// panic. Every helper below that can see a city name from the config or a
+	// geocoding result uses utf16Of instead.
 	title := syscall.StringToUTF16(d.lang.SettingsTitle())
 	d.hwnd = win.CreateWindowEx(
 		0, syscall.StringToUTF16Ptr(settingsClassName), &title[0],
@@ -710,7 +712,7 @@ func (d *setDlg) onSearchDone() {
 }
 
 func listAdd(hList win.HWND, text string) {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	win.SendMessage(hList, win.LB_ADDSTRING, 0, uintptr(unsafe.Pointer(&t[0])))
 	runtime.KeepAlive(t)
 }
@@ -812,19 +814,12 @@ func (d *setDlg) onSave() {
 // parseCoord keeps the previous value when the field holds nonsense, rather
 // than silently moving the user to the Gulf of Guinea. It is the same rule the
 // GTK backend applies, down to using the same parser.
-func parseCoord(s string, fallback float64) float64 {
-	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
-		return fallback
-	}
-	return v
-}
 
 // The createX helpers below take device pixels. Everything in this file goes
 // through the setDlg methods above, which scale for DPI first.
 
 func createStatic(parent win.HWND, text string, x, y, w, h int) win.HWND {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	return win.CreateWindowEx(0, syscall.StringToUTF16Ptr("STATIC"), &t[0],
 		win.WS_CHILD|win.WS_VISIBLE|win.SS_LEFT,
 		int32(x), int32(y), int32(w), int32(h),
@@ -832,7 +827,7 @@ func createStatic(parent win.HWND, text string, x, y, w, h int) win.HWND {
 }
 
 func createEdit(parent win.HWND, text string, x, y, w, h int, id int32) win.HWND {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	return win.CreateWindowEx(win.WS_EX_CLIENTEDGE, syscall.StringToUTF16Ptr("EDIT"), &t[0],
 		win.WS_CHILD|win.WS_VISIBLE|win.ES_LEFT|win.ES_AUTOHSCROLL,
 		int32(x), int32(y), int32(w), int32(h),
@@ -840,7 +835,7 @@ func createEdit(parent win.HWND, text string, x, y, w, h int, id int32) win.HWND
 }
 
 func createButton(parent win.HWND, text string, x, y, w, h int, id int32) win.HWND {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	return win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
 		win.WS_CHILD|win.WS_VISIBLE|win.BS_PUSHBUTTON|win.WS_TABSTOP,
 		int32(x), int32(y), int32(w), int32(h),
@@ -866,7 +861,7 @@ func unthemeForDark(hwnd win.HWND, dark bool) win.HWND {
 }
 
 func createGroup(parent win.HWND, text string, x, y, w, h int) win.HWND {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	return win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
 		win.WS_CHILD|win.WS_VISIBLE|win.BS_GROUPBOX,
 		int32(x), int32(y), int32(w), int32(h),
@@ -878,7 +873,7 @@ func createRadio(parent win.HWND, text string, x, y, w, h int, id int32, checked
 	if first {
 		style |= win.WS_GROUP
 	}
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	hwnd := win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
 		style, int32(x), int32(y), int32(w), int32(h),
 		parent, win.HMENU(id), 0, nil)
@@ -910,7 +905,7 @@ func createRadio(parent win.HWND, text string, x, y, w, h int, id int32, checked
 // focus onto it. Fixing that means auditing the group boundaries of the whole
 // window, which is its own change.
 func createCheck(parent win.HWND, text string, x, y, w, h int, id int32, checked bool) win.HWND {
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	hwnd := win.CreateWindowEx(0, syscall.StringToUTF16Ptr("BUTTON"), &t[0],
 		win.WS_CHILD|win.WS_VISIBLE|win.BS_AUTOCHECKBOX|win.WS_TABSTOP|win.WS_GROUP,
 		int32(x), int32(y), int32(w), int32(h),
@@ -930,7 +925,7 @@ func createListBox(parent win.HWND, x, y, w, h int, id int32) win.HWND {
 
 func setText(hwnd win.HWND, id int32, text string) {
 	hCtrl := win.GetDlgItem(hwnd, id)
-	t := syscall.StringToUTF16(text)
+	t := utf16Of(text)
 	win.SendMessage(hCtrl, win.WM_SETTEXT, 0, uintptr(unsafe.Pointer(&t[0])))
 	runtime.KeepAlive(t)
 }

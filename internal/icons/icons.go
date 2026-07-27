@@ -1,4 +1,4 @@
-﻿package icons
+package icons
 
 import (
 	"bytes"
@@ -131,7 +131,7 @@ func drawTempFit(img *image.RGBA, temp float64, sz int, fontScale int) {
 	src := image.Rectangle{Max: image.Point{X: int(srcW), Y: int(srcH)}}
 	dst := image.Rectangle{
 		Min: image.Point{X: int(xOff), Y: int(yOff)},
-		Max: image.Point{X: int(xOff+dstW), Y: int(yOff+targetH)},
+		Max: image.Point{X: int(xOff + dstW), Y: int(yOff + targetH)},
 	}
 	draw.BiLinear.Scale(img, dst, small, src, draw.Over, nil)
 }

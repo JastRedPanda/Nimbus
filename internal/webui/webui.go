@@ -148,7 +148,10 @@ func ShowAbout(theme string) {
 	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
 		aboutTmpl.Execute(w, map[string]string{"iconTheme": theme})
 	})
-	http.Serve(l, mux)
+	// go, like every other page here. Without it this never returns, and the tray
+	// calls About on its single menu-dispatch loop - so one click wedged Forecast,
+	// Settings and Quit for the rest of the process.
+	go http.Serve(l, mux)
 }
 
 func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {

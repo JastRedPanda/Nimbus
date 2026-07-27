@@ -5,7 +5,7 @@ package ui
 import (
 	"fmt"
 	"log"
-	"strconv"
+	"time"
 
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
@@ -22,6 +22,11 @@ const (
 	// bar. Deliberately generous - a ceiling a few pixels too low costs a scrollbar
 	// nobody needed, one too high costs the buttons.
 	settingsChromeH = 120
+
+	// fontScaleSettle is how long the font-scale slider waits before regenerating
+	// the tray icon. Short enough to read as live feedback, long enough that a drag
+	// across the whole range costs a handful of regenerations instead of a hundred.
+	fontScaleSettle = 150 * time.Millisecond
 )
 
 // Update intervals in minutes, with the captions the dropdown shows.
@@ -205,7 +210,12 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	})
 	cancel := gtk.NewButton(l.CancelBtn(), func() { finish(nil) })
 	del := gtk.NewButton(l.DeleteCfgBtn(), func() {
-		config.Delete()
+		// Logged, the way the Win32 twin logs it: Delete advances the reset counter
+		// either way, so a failure here leaves the user believing the configuration
+		// is gone when the file is still on disk.
+		if err := config.Delete(); err != nil {
+			log.Printf("settings: deleting the configuration failed: %v", err)
+		}
 		finish(config.Default())
 	})
 
@@ -290,9 +300,6 @@ func radioFrame(page uintptr, title string, labels []string, active int) gtk.Rad
 	return group
 }
 
-// radioRow is radioFrame without the frame: a caption and the buttons on one
-// line. It exists because this window has no vertical room for another titled
-// group - see the comment at its call site, which has the measurements.
 // settingsMaxPageH is the tallest the scrolling part of the window may be: the
 // work area the pointer is on, less the room the button row, the window border and
 // the window manager's title bar need. Zero when the work area cannot be read, in
@@ -316,6 +323,9 @@ func settingsMaxPageH() int {
 	return h
 }
 
+// radioRow is radioFrame without the frame: a caption and the buttons on one
+// line. It exists because this window has no vertical room for another titled
+// group - see the comment at its call site, which has the measurements.
 func radioRow(page uintptr, caption string, labels []string, active int) gtk.RadioGroup {
 	group := gtk.NewRadioGroup(labels, active)
 	row := gtk.NewHBox(12)
@@ -334,11 +344,34 @@ func sliderFrame(page uintptr, l i18n.Lang, value int, onFontScale func(int)) gt
 	slider := gtk.NewSlider(1, 100, value)
 	readout := gtk.NewCell(fmt.Sprintf("%d%%", value), gtk.AlignEnd)
 
+	// The readout follows the thumb; the icon does not. Regenerating the tray icon
+	// costs a measured 1.84 ms and about a megabyte per call - it rasterises two
+	// frames, PNG-encodes them, and systray then re-decodes the PNG and emits a
+	// D-Bus signal under its own lock. GTK delivers value-changed for every integer
+	// the thumb crosses, so dragging across the range fired it about a hundred
+	// times: some 200 ms of frozen main loop, which is the one thread the forecast
+	// panel, About, the error dialog and every gtk.Invoke share, plus a hundred
+	// megabytes of garbage. gtk.Slider.OnChange's own doc says the callback must be
+	// cheap or coalesce, and the Win32 twin already ignores SB_THUMBTRACK.
+	//
+	// So the preview is coalesced: the newest value is remembered and one settler is
+	// armed, exactly the armSettle idiom forecast_linux.go uses. All of this runs on
+	// the GTK thread, so the two variables need no lock.
+	pending, settling := value, false
 	slider.OnChange(func(v int) {
 		gtk.SetLabel(readout, fmt.Sprintf("%d%%", v))
-		if onFontScale != nil {
-			onFontScale(v)
+		if onFontScale == nil {
+			return
 		}
+		pending = v
+		if settling {
+			return
+		}
+		settling = true
+		gtk.After(fontScaleSettle, func() {
+			settling = false
+			onFontScale(pending)
+		})
 	})
 
 	row := gtk.NewHBox(8)
@@ -386,10 +419,3 @@ func pick(i int, options ...string) string {
 
 // parseCoord keeps the previous value when the field holds nonsense, rather
 // than silently moving the user to the Gulf of Guinea.
-func parseCoord(s string, fallback float64) float64 {
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return fallback
-	}
-	return v
-}
