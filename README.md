@@ -19,6 +19,7 @@ Languages: English, Українська
 - Font scale: slider 1–100% for tray text / Масштаб шрифту в треї
 - Update interval: 5 min – 24 hours
 - Window theme: Auto / Dark / Light
+- **Forecast panel look**: Modern / System look — translucent frameless sheet, or an ordinary window with a title bar / Вигляд панелі прогнозу: Modern / Системний вигляд
 - Language: English / Українська
 - **Pinned forecast panel** - closes only from the tray icon or the close button, and remembers where it was dragged / Панель прогнозу закривається лише кліком по іконці в треї або кнопкою закриття та запамʼятовує місце, куди її перетягнули
 - No console window (Windows) / Без консольного вікна (Windows)
@@ -98,10 +99,47 @@ Fields / Поля:
 - Pressure unit (hPa / mmHg / inHg) / Одиниця тиску
 - Wind unit (m/s / km/h) / Одиниця вітру
 - Window theme (Auto / Dark / Light) / Тема вікон
+- Appearance of the forecast panel (Modern / System look) / Вигляд панелі прогнозу (Modern / Системний вигляд)
 - Language (English / Українська)
 - Font scale 1–100% for tray text / Масштаб шрифту в треї
 - Update interval (5 min – 24 h) / Інтервал оновлення
 - Close the forecast panel only from the tray icon / Закривати панель прогнозу лише кліком по іконці
+
+#### Forecast panel appearance / Вигляд панелі прогнозу
+
+**Modern is the default and is what the panel has always looked like:** a
+translucent sheet with rounded corners, no title bar, and its own close button in
+the top corner. Its colours come from the app's palette, which the theme option
+picks.
+
+**System look** turns the same panel into an ordinary application window: opaque,
+square corners, the window manager's title bar with the window manager's own close
+button - so there is no close button inside the panel any more, the title bar
+provides it. The colours come **from the desktop theme**, which is why the theme
+option (Auto / Dark / Light) no longer has any say over the panel in this look; it
+still decides the tray icon and the other windows.
+
+Nothing else changes. In both looks the panel stays above other windows, stays off
+the taskbar and the pager, is visible on every workspace, is dragged by any part of
+its body, remembers where it was put, toggles from the tray icon, obeys the pinned
+option below, and shows exactly the same table.
+
+**Modern - типове значення, і це той вигляд, який панель мала завжди:**
+напівпрозоре полотно із заокругленими кутами, без заголовка, з власною кнопкою
+закриття в куті. Кольори беруться з палітри застосунку, яку вибирає опція теми.
+
+**Системний вигляд** перетворює ту саму панель на звичайне вікно застосунку:
+непрозоре, з прямими кутами, із заголовком і кнопкою закриття від менеджера вікон
+- тому власної кнопки закриття всередині панелі більше немає, її роль виконує
+заголовок. Кольори беруться **з теми стільниці**, тому опція теми (Авто / Темна /
+Світла) в цьому вигляді на панель більше не впливає; вона й далі керує піктограмою
+в треї та іншими вікнами.
+
+Решта - як і було. В обох виглядах панель тримається поверх інших вікон, не
+показується в панелі задач і в перемикачі робочих столів, видима на всіх робочих
+столах, тягнеться за будь-яке місце, запамʼятовує, куди її поставили,
+перемикається кліком по іконці в треї, підкоряється опції нижче та показує ту саму
+таблицю.
 
 #### Forecast panel behaviour / Поведінка панелі прогнозу
 
@@ -128,10 +166,13 @@ moved keeps appearing at the corner nearest the pointer.
 The browser fallback (used when the GTK libraries are missing) has no checkbox for
 this option and no draggable panel, so there `forecast_pinned` and the remembered
 position keep whatever the config file holds and can only be changed by editing
-that file. / Резервна
+that file. `appearance` is meaningless there for the same reason - the forecast is
+a browser tab, not a window Nimbus draws - and is likewise left as stored. / Резервна
 веб-форма (використовується, коли бібліотеки GTK відсутні) не має ні цієї галочки,
 ні панелі, яку можна перетягувати, тому там `forecast_pinned` зберігає значення з
-файлу конфігурації та змінюється лише редагуванням цього файлу.
+файлу конфігурації та змінюється лише редагуванням цього файлу. `appearance` там не
+має сенсу з тієї ж причини - прогноз відкривається як вкладка браузера, а не як
+вікно, яке малює Nimbus - і теж зберігає значення з файлу.
 
 _After an upgrade the panel stops closing on `Esc` and on focus loss - this is the
 new default, not a bug. / Після оновлення панель більше не закривається по `Esc`
@@ -157,6 +198,7 @@ Auto-created at first run:
   "icon_theme": "auto",
   "language": "en",
   "font_scale": 100,
+  "appearance": "modern",
   "forecast_pinned": true
 }
 ```
@@ -174,7 +216,8 @@ time; while they are absent the panel opens next to the pointer.
 | `units` | `celsius` / `fahrenheit` | Temperature unit / Одиниця температури |
 | `pressure_unit` | `hpa` / `mmhg` / `inhg` | Pressure unit / Одиниця тиску |
 | `wind_unit` | `ms` / `kmh` | Wind unit / Одиниця вітру |
-| `icon_theme` | `auto` / `dark` / `light` | Window theme / Тема вікон |
+| `icon_theme` | `auto` / `dark` / `light` | Window theme; does not apply to the forecast panel in the system look / Тема вікон; у системному вигляді на панель прогнозу не впливає |
+| `appearance` | `modern` / `system` (default `modern`) | Forecast panel look: translucent frameless sheet, or an ordinary window coloured by the desktop theme. Any other value means `modern` / Вигляд панелі прогнозу: напівпрозоре полотно без рамки або звичайне вікно з кольорами теми стільниці. Будь-яке інше значення означає `modern` |
 | `language` | `en` / `uk` | UI language / Мова інтерфейсу |
 | `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
 | `forecast_pinned` | bool (default `true`) | Forecast panel closes only from the tray icon or the close button / Панель прогнозу закривається лише кліком по іконці в треї або кнопкою закриття |

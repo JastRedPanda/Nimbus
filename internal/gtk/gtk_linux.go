@@ -197,6 +197,8 @@ var (
 	comboSetActive   func(uintptr, int32)
 	comboGetActive   func(uintptr) int32
 	scrolledNew      func(uintptr, uintptr) uintptr
+	scrolledMaxH     func(uintptr, int32)
+	scrolledNatural  func(uintptr, int32)
 	scrolledPolicy   func(uintptr, int32, int32)
 	scrolledMinH     func(uintptr, int32)
 	frameNew         func(string) uintptr
@@ -367,6 +369,8 @@ func load() {
 	purego.RegisterLibFunc(&scrolledNew, gtk, "gtk_scrolled_window_new")
 	purego.RegisterLibFunc(&scrolledPolicy, gtk, "gtk_scrolled_window_set_policy")
 	purego.RegisterLibFunc(&scrolledMinH, gtk, "gtk_scrolled_window_set_min_content_height")
+	purego.RegisterLibFunc(&scrolledMaxH, gtk, "gtk_scrolled_window_set_max_content_height")
+	purego.RegisterLibFunc(&scrolledNatural, gtk, "gtk_scrolled_window_set_propagate_natural_height")
 	purego.RegisterLibFunc(&frameNew, gtk, "gtk_frame_new")
 	purego.RegisterLibFunc(&widgetSensitive, gtk, "gtk_widget_set_sensitive")
 	purego.RegisterLibFunc(&containerChild, gtk, "gtk_container_get_children")
@@ -1128,6 +1132,33 @@ func ConnectEvent(obj uintptr, signal string, fn func(event uintptr) bool) {
 	signalConnect(obj, signal, eventTrampoline, id, 0, 0)
 }
 
+// newPanelWindow creates the toplevel that both looks of the forecast panel are
+// built on, which is everything about it except whether the window manager frames
+// it. NewPanel turns the frame off; NewFramedPanel leaves it on.
+//
+// The hints live here rather than in each constructor because not one of them
+// depends on the decorations: in either look this is a tray popup, so it stays
+// above other windows (an explicit request of its own, not a side effect of being
+// undecorated), keeps its button out of the taskbar and the pager, and sticks to
+// every workspace so it follows the user. Copying the list into a second
+// constructor is how the two end up a hint apart after the next change to either.
+//
+// Every call below is a property set on a window that is not realised yet, so GTK
+// stores the value and applies it when the GdkWindow is created. The order they
+// are made in therefore carries no meaning, which is what lets the one call that
+// differs be left to the caller.
+func newPanelWindow(title string, w, h int) uintptr {
+	win := windowNew(WindowToplevel)
+	windowTitle(win, title) // the WM uses it for alt-tab, and for the title bar
+	windowSize(win, int32(w), int32(h))
+	windowSkipTask(win, 1)
+	windowSkipPager(win, 1)
+	windowKeepAbove(win, 1)
+	windowStick(win)
+	// No gtk_window_set_position: a placement hint would overrule Move.
+	return win
+}
+
 // NewPanel creates an undecorated, always-on-top window that stays out of the
 // taskbar and the pager and follows the user across workspaces - a tray popup
 // rather than a document window.
@@ -1141,16 +1172,31 @@ func ConnectEvent(obj uintptr, signal string, fn func(event uintptr) bool) {
 //
 // The caller is responsible for dismissal: see OnEscape and OnFocusOut.
 func NewPanel(title string, w, h int) Window {
-	win := windowNew(WindowToplevel)
-	windowTitle(win, title) // the WM still uses it for alt-tab
-	windowSize(win, int32(w), int32(h))
+	win := newPanelWindow(title, w, h)
 	windowDecorated(win, 0)
-	windowSkipTask(win, 1)
-	windowSkipPager(win, 1)
-	windowKeepAbove(win, 1)
-	windowStick(win)
-	// No gtk_window_set_position: a placement hint would overrule Move.
 	return Window(win)
+}
+
+// NewFramedPanel is NewPanel with the window manager's frame left on: a title
+// bar, a border, and the manager's own close button. It is what the forecast
+// panel's system look is built from, where the panel is meant to read as an
+// ordinary application window instead of a sheet floating over the desktop.
+//
+// It differs from NewPanel in one call it does NOT make,
+// gtk_window_set_decorated(FALSE) - GTK's default is decorated, which is the same
+// default NewWindow already relies on for the settings and About windows. Every
+// hint newPanelWindow sets is kept, and none of them is a consequence of being
+// undecorated: a framed panel is still a tray popup, so it still belongs above
+// other windows, out of the taskbar and the pager, and stuck across workspaces.
+// The user asked for a title bar, not for a different window.
+//
+// Two caller obligations follow from the frame. Do not call SetTranslucent on
+// this window - an RGBA visual exists to composite the Modern look's alpha
+// against the desktop, and a framed window is opaque by definition. And wire
+// OnDeleteEvent: the frame's close button does not go through the same path as
+// the in-window one, and on its own it reports nothing.
+func NewFramedPanel(title string, w, h int) Window {
+	return Window(newPanelWindow(title, w, h))
 }
 
 // SetTranslucent gives the window an RGBA visual so CSS alpha composites
@@ -1188,6 +1234,34 @@ func (w Window) OnEscape(fn func()) {
 		if eventKeyval(event, &keyval) == 0 || keyval != keyEscape {
 			return false
 		}
+		fn()
+		return true
+	})
+}
+
+// OnDeleteEvent runs fn when the window manager asks the window to close: the
+// title bar's close button, the frame menu, or a session shutdown. Only a framed
+// window can reach it - an undecorated panel has nothing that emits it - so it is
+// the system look's counterpart to the in-window close button, which the title bar
+// replaces.
+//
+// It exists because the default behaviour reports nothing. GTK's own
+// "delete-event" handler destroys the window directly, which never runs the
+// panel's dismissal, so the position the user dragged the panel to is not written
+// out. That is harmless for an undecorated panel, where a window manager close is
+// something that essentially never happens, and wrong for a framed one, where the
+// title bar is the ordinary way the panel gets closed - it would lose the
+// remembered position on almost every close.
+//
+// The handler returns TRUE, which stops that default destroy. fn therefore owns
+// destroying the window: an fn that does not is a window whose close button does
+// nothing. Hand it the same dismissal OnEscape gets and every exit reports alike.
+//
+// Scoped to the window like every other window-level handler here, because the
+// panel is opened and closed all session and an unscoped registration would leave
+// one closure per open in eventFns for the life of the process.
+func (w Window) OnDeleteEvent(fn func()) {
+	ConnectEventScoped(uintptr(w), "delete-event", func(uintptr) bool {
 		fn()
 		return true
 	})
@@ -1343,6 +1417,18 @@ func dragReady() bool {
 // toplevel's global position, so GTK answers 0,0 - not as an error but as the only
 // thing it can say. It answers 0,0 for a missing gtk_window_get_position too, and
 // neither case is distinguishable from a window genuinely at the top-left corner.
+//
+// It answers, and Move accepts, the position of the window FRAME when the window
+// manager draws one, and of the window itself when it does not. That is what GTK
+// documents - the pair round-trips, so what Move is given is what Position gives
+// back - and it is the right behaviour for remembering a place. What it is not is
+// comparable between a decorated window and an undecorated one: measured under
+// Marco, the same forecast panel sitting in the same visible spot reads 500,550
+// undecorated and 499,528 framed, the difference being the frame extents
+// 1,1,22,1. A position saved in one appearance and reused in the other is
+// therefore off by the title bar, once, until the next drag corrects it. Storing
+// which look wrote it would fix that and is not worth a config field for a
+// one-time 22px nudge.
 //
 // The signature stays (int, int) rather than growing an ok result because that
 // 0,0 costs nothing: the caller reads this once when a drag begins and once when
@@ -1556,6 +1642,32 @@ func NewFrame(title string, child uintptr) uintptr {
 // A GtkBox is not scrollable, and gtk_container_add wraps such a child in the
 // GtkViewport it needs. That has been automatic since GTK 3.8; this package
 // needs a far newer GTK 3 than that for other reasons.
+// NewScrolledPage wraps a whole window page so that it scrolls only when it has
+// to. propagate-natural-height makes the scroller ask for exactly the height its
+// child wants, so a page that fits looks and measures as though there were no
+// scroller at all; max-content-height is the ceiling past which it starts
+// scrolling instead of growing.
+//
+// It exists because a non-resizable window around an unscrolled page has its
+// content's natural height as its ONLY height, and nothing can shrink it. The
+// settings window reached 758 pixels of content on a 1366x768 screen, which put
+// its Save, Cancel and Delete buttons below the bottom edge with no way to reach
+// them - so the caller keeps those buttons OUTSIDE this scroller. Both properties
+// are GTK 3.22, which this binding already requires elsewhere for
+// gdk_monitor_get_workarea.
+func NewScrolledPage(child uintptr, maxHeight int) uintptr {
+	sw := scrolledNew(0, 0)
+	scrolledPolicy(sw, policyNever, policyAutomatic)
+	scrolledNatural(sw, 1)
+	if maxHeight > 0 {
+		scrolledMaxH(sw, int32(maxHeight))
+	}
+	if child != 0 {
+		containerAdd(sw, child)
+	}
+	return sw
+}
+
 func NewScrolled(child uintptr, minHeight int) uintptr {
 	sw := scrolledNew(0, 0)
 	scrolledPolicy(sw, policyNever, policyAutomatic)

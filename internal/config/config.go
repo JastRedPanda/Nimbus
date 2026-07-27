@@ -21,6 +21,25 @@ type Config struct {
 	Language       string  `json:"language"`
 	FontScale      int     `json:"font_scale"`
 
+	// Appearance chooses how the forecast panel is dressed: "modern" is the
+	// translucent, round-cornered, undecorated sheet with its own close button,
+	// and "system" is an ordinary application window - opaque, square, with the
+	// window manager's title bar and its colours taken from the desktop theme.
+	// Everything else about the panel is the same either way.
+	//
+	// The tag has no omitempty for the same reason ForecastPinned's has none, even
+	// though the failure looks different: neither legal value is the empty string,
+	// so omitempty would never fire today, which is exactly what makes it a trap -
+	// it would sit there stating that an empty value may be dropped, and the next
+	// edit that gives this field an empty-meaning-default would silently stop
+	// persisting the user's choice with nothing in the diff to point at.
+	//
+	// Readers must treat an unrecognised value as "modern" rather than trusting
+	// the string: it is a hand-editable file and a downgrade can leave a value this
+	// build has never heard of. Switch on "system" with a default arm - never
+	// compare against "modern", which would make every typo mean the system look.
+	Appearance string `json:"appearance"`
+
 	// ForecastPinned keeps the forecast panel on screen until the tray icon or
 	// the close button dismisses it: while it is set, Escape and losing focus do
 	// nothing.
@@ -56,6 +75,7 @@ func Default() *Config {
 		IconTheme:      "auto",
 		Language:       "en",
 		FontScale:      100,
+		Appearance:     "modern",
 		ForecastPinned: true,
 	}
 }

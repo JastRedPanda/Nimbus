@@ -31,6 +31,22 @@ package ui
 // actually got an RGBA visual; without a compositor their alpha would be
 // composited against black, and the rounded corners the translucent palettes
 // ask for would render as black notches.
+//
+// THE SYSTEM LOOK USES THIS SHEET WITH NO PALETTE CLASS, which is how "colours
+// from the desktop theme" is implemented. It carries one marker class, .system,
+// whose single rule sets a thickness and never a colour - see the block below the
+// font sizes for what that is for. Every colour, every background and the
+// one border-radius below hangs off .dark/.light or .solid/.translucent, so a
+// window carrying nothing but the #nimbus-forecast name matches the two resets,
+// the page padding and the two font sizes and not one rule more; the theme then
+// paints the window, the labels, the header and the separators itself. That is
+// also why the resets are not folded into the palette selectors even though it
+// would shorten the sheet by two blocks: the system look would get BlackMATE's
+// 6px label padding and its label colours back, with nothing in this file left to
+// explain why. Measured under BlackMATE with no class applied: opaque grey
+// window, legible near-white labels, and separators the theme paints a shade
+// darker than the background - so the system look needs no colour rule of its own
+// and has none.
 const forecastCSS = `
 /* Reset: undo what the desktop theme states on these nodes. */
 #nimbus-forecast,
@@ -76,7 +92,19 @@ const forecastCSS = `
   font-size: 11pt;     /* cellPt */
 }
 
-/* The panel has no title bar, so closing it needs a visible affordance. */
+/* The system look's only rule, and it names no colour on purpose.
+   With nothing but the resets matching, the header rule and the row hairlines
+   both fell through to the theme's single separator colour and the two weights
+   the table is built on became one - 1.08:1 against the background under
+   Adwaita:dark, which is not visible at all. Thickness restores the hierarchy
+   while the colour stays the theme's, which is the whole point of the look. */
+#nimbus-forecast.system .rule {
+  min-height: 2px;
+}
+
+/* The Modern panel has no title bar, so closing it needs a visible affordance.
+   The system look packs no such button - the title bar carries one - so these
+   declarations simply match nothing there. */
 /* Bold as well as larger: U+00D7 has thin strokes and little ink for its em,
    so size alone barely reads. It is kept over a heavier codepoint like U+2715
    because every font ships it. */

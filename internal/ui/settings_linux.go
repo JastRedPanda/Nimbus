@@ -17,6 +17,11 @@ const (
 	settingsWidth   = 460
 	resultsMinH     = 92
 	settingsSpacing = 10
+	// settingsChromeH is what the window needs around the scrolling page: the button
+	// row, the 14px border top and bottom, the box spacing between them and a title
+	// bar. Deliberately generous - a ceiling a few pixels too low costs a scrollbar
+	// nobody needed, one too high costs the buttons.
+	settingsChromeH = 120
 )
 
 // Update intervals in minutes, with the captions the dropdown shows.
@@ -98,8 +103,23 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	win.OnDestroy(func() { finish(nil) })
 	win.OnEscape(func() { finish(nil) })
 
+	// The page scrolls; the buttons do not. A non-resizable window around an
+	// unscrolled page has its content's natural height as its only height, so every
+	// setting added to this window pushed the button row further down until, on a
+	// 1366x768 screen, Save, Cancel and Delete sat below the bottom edge with no way
+	// to reach them - measured at 758 pixels of content against a 768 pixel screen.
+	// Keeping the buttons in the outer box means the window can run out of room for
+	// the settings without ever running out of room for the way to accept them.
+	//
+	// The ceiling is the work area the pointer is on, less what the buttons, the
+	// window border and the title bar need. A page that fits is unaffected: the
+	// scroller asks for its child's natural height, so the window looks and measures
+	// exactly as it did before this was here.
+	outer := gtk.NewVBox(settingsSpacing)
+	win.Add(outer)
+
 	page := gtk.NewVBox(settingsSpacing)
-	win.Add(page)
+	gtk.PackStart(outer, gtk.NewScrolledPage(page, settingsMaxPageH()), true, true, 0)
 
 	city := gtk.NewEntry(cfg.CityName)
 	lat := gtk.NewEntry(fmt.Sprintf("%.4f", cfg.Latitude))
@@ -120,12 +140,27 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 
 	scale := sliderFrame(page, l, cfg.FontScale, onFontScale)
 
-	// Straight into the page, with no frame around it. A titled border holding a
-	// single checkbox is chrome for nothing, and this window has no vertical
-	// space to give it: measured on a 1366x768 display under BlackMATE it already
-	// stood at 688 against a 720 work area, and the frame took it to 750, which
-	// puts Save, Cancel and Delete below the bottom edge of a window that is
-	// neither resizable nor scrollable. The checkbox's own label is its title.
+	// Directly above the pin checkbox: both settings are about the forecast panel
+	// and nothing else, so they belong next to each other. Modern is first because
+	// it is what index falls back to, which is what an unrecognised value in the
+	// file must show.
+	//
+	// A row with a plain caption, NOT a titled frame like every other group in this
+	// window, and the reason is arithmetic rather than taste. This window is
+	// gtk.NewWindow(..., resizable=false) around an unscrolled page, so its natural
+	// height IS its height and nothing can shrink it. Measured on a 1366x768 screen:
+	// 723 client pixels under BlackMATE before this option existed, already past a
+	// 720 work area, and a frame for these two words took it to 785 - the whole
+	// button row below the bottom edge of the screen, with no way left to reach
+	// Save. A frame costs its border and its title on top of the row it holds; a
+	// caption in the row costs the row. The pin checkbox below is frameless for the
+	// same reason and says so.
+	appearance := radioRow(page, l.AppearanceGroup(), []string{l.LookModern(), l.LookSystem()},
+		index(cfg.Appearance, "modern", "system"))
+
+	// Straight into the page, with no frame around it either. A titled border
+	// holding a single checkbox is chrome for nothing, and the checkbox's own label
+	// is its title.
 	pin := gtk.NewCheck(l.PinForecast(), cfg.ForecastPinned)
 	gtk.PackStart(page, uintptr(pin), false, false, 0)
 
@@ -143,6 +178,14 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		nc.IconTheme = pick(theme.Active(), "auto", "dark", "light")
 		nc.Language = pick(lang.Active(), "en", "uk")
 		nc.FontScale = scale.Value()
+		// Only when the buttons were actually built. Active answers -1 for a group
+		// with no members, and pick turns any out-of-range index into the first
+		// option - so a group that could not be created would write "modern" over a
+		// user who had chosen the system look and was never shown either button.
+		// nc carries the stored value forward instead.
+		if i := appearance.Active(); i >= 0 {
+			nc.Appearance = pick(i, "modern", "system")
+		}
 		// Only when the box was actually built. A Check that could not be
 		// created reads as unticked, and writing that would turn off an option
 		// the user was never shown; nc carries the stored value forward instead.
@@ -170,7 +213,8 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	gtk.PackStart(buttons, save, true, true, 0)
 	gtk.PackStart(buttons, cancel, true, true, 0)
 	gtk.PackStart(buttons, del, true, true, 0)
-	gtk.PackStart(page, buttons, false, false, 0)
+	// Into outer, NOT page: these must stay reachable however tall the settings get.
+	gtk.PackStart(outer, buttons, false, false, 0)
 
 	win.ShowAll()
 }
@@ -243,6 +287,43 @@ func radioFrame(page uintptr, title string, labels []string, active int) gtk.Rad
 		gtk.PackStart(row, b, false, false, 0)
 	}
 	gtk.PackStart(page, gtk.NewFrame(title, row), false, false, 0)
+	return group
+}
+
+// radioRow is radioFrame without the frame: a caption and the buttons on one
+// line. It exists because this window has no vertical room for another titled
+// group - see the comment at its call site, which has the measurements.
+// settingsMaxPageH is the tallest the scrolling part of the window may be: the
+// work area the pointer is on, less the room the button row, the window border and
+// the window manager's title bar need. Zero when the work area cannot be read, in
+// which case the scroller imposes no ceiling and the window behaves exactly as it
+// did before it scrolled at all.
+func settingsMaxPageH() int {
+	x, y, ok := gtk.PointerPosition()
+	if !ok {
+		return 0
+	}
+	area, ok := gtk.WorkAreaAt(x, y)
+	if !ok {
+		return 0
+	}
+	h := area.H - settingsChromeH
+	if h < resultsMinH {
+		// A work area this small makes any ceiling absurd; let the window be its
+		// natural height and let the window manager deal with it.
+		return 0
+	}
+	return h
+}
+
+func radioRow(page uintptr, caption string, labels []string, active int) gtk.RadioGroup {
+	group := gtk.NewRadioGroup(labels, active)
+	row := gtk.NewHBox(12)
+	gtk.PackStart(row, gtk.NewText(caption+":"), false, false, 0)
+	for _, b := range group {
+		gtk.PackStart(row, b, false, false, 0)
+	}
+	gtk.PackStart(page, row, false, false, 0)
 	return group
 }
 

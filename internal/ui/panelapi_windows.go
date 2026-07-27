@@ -17,6 +17,11 @@ package ui
 // file owns. LoadLibrary is reference counted, so a second lazy handle to
 // user32.dll costs nothing.
 //
+// One entry here is a NARROWER form of something lxn/win does export -
+// adjustWindowRectEx against its AdjustWindowRect - and its comment says why the
+// exported one cannot answer the question the panel is asking. That is the only
+// justification for a duplicate; "it was easier to write" is not.
+//
 // What is deliberately NOT here: the panel's drag path needs ReleaseCapture,
 // GetWindowRect, WM_NCLBUTTONDOWN and HTCAPTION to start the move loop,
 // WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE to know that the loop is running and
@@ -40,6 +45,7 @@ var (
 
 	procUpdateLayeredWindow = panelUser32.NewProc("UpdateLayeredWindow")
 	procMonitorFromRect     = panelUser32.NewProc("MonitorFromRect")
+	procAdjustWindowRectEx  = panelUser32.NewProc("AdjustWindowRectEx")
 	procGetTextFace         = panelGdi32.NewProc("GetTextFaceW")
 )
 
@@ -124,6 +130,43 @@ func monitorFromRect(rc *win.RECT, flags uint32) win.HMONITOR {
 		uintptr(unsafe.Pointer(rc)), uintptr(flags))
 	runtime.KeepAlive(rc)
 	return win.HMONITOR(ret)
+}
+
+// adjustWindowRectEx wraps
+//
+//	BOOL AdjustWindowRectEx(LPRECT lpRect, DWORD dwStyle, BOOL bMenu,
+//	                        DWORD dwExStyle)
+//
+// It answers how much larger a window is than the client area it is asked for.
+// Given a zeroed rect it returns the frame alone: Right-Left is the width of the
+// borders and Bottom-Top the borders plus the caption.
+//
+// lxn/win has the non-Ex AdjustWindowRect, which darkmode_windows.go's
+// frameOverhead uses, and it is not good enough for the forecast panel: the
+// extended style is exactly what decides the caption's height here.
+// WS_EX_TOOLWINDOW asks for the thin palette-window caption, SM_CYSMCAPTION
+// rather than SM_CYCAPTION, and the non-Ex call has no way to be told about it,
+// so it would over-reserve by the difference - a few pixels of client area below
+// the composed image that WM_PAINT does not cover and WM_ERASEBKGND refuses to
+// erase, i.e. a strip of uninitialised memory along the bottom of the panel. The
+// settings window can use the non-Ex call safely because it is created with an
+// extended style of 0.
+//
+// Not AdjustWindowRectExForDpi, which is the per-monitor-DPI form: this process
+// declares SYSTEM dpiAwareness in its manifest, so every window it owns is drawn
+// at the system DPI and that is the DPI this call already answers for.
+func adjustWindowRectEx(rc *win.RECT, style uint32, menu bool, exStyle uint32) bool {
+	if err := procAdjustWindowRectEx.Find(); err != nil {
+		return false
+	}
+	var b uintptr
+	if menu {
+		b = 1
+	}
+	ret, _, _ := syscall.SyscallN(procAdjustWindowRectEx.Addr(),
+		uintptr(unsafe.Pointer(rc)), uintptr(style), b, uintptr(exStyle))
+	runtime.KeepAlive(rc)
+	return ret != 0
 }
 
 // getTextFace wraps int GetTextFaceW(HDC hdc, int c, LPWSTR lpName).

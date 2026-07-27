@@ -125,6 +125,29 @@ func (s *surface) blitFrom(src *image.RGBA) {
 	}
 }
 
+// blitTo copies the whole surface onto a device context at its origin, which is
+// how the composed image reaches an ORDINARY window - the forecast panel's system
+// look, where there is no WS_EX_LAYERED and therefore no UpdateLayeredWindow to
+// hand it to. The destination is the window's client area, obtained from
+// BeginPaint inside WM_PAINT.
+//
+// A plain SRCCOPY needs no vertical flip and no attention to alpha, and both facts
+// come from how newSurface built the DIB. Top-down, so row 0 is the top row in the
+// destination as well as in the source. BI_RGB at 32bpp declares no alpha channel,
+// so GDI reads the B, G and R bytes and ignores the fourth - which is exactly
+// right here, because the sheet under an ordinary window is opaque and the alpha
+// the composition wrote is 255 everywhere it matters and meaningless everywhere
+// else.
+//
+// This does not breach the rule at the top of this file. GDI is READING the
+// surface, not drawing into it; nothing here can touch a byte of it.
+func (s *surface) blitTo(dc win.HDC) bool {
+	if s == nil || s.dc == 0 || dc == 0 {
+		return false
+	}
+	return win.BitBlt(dc, 0, 0, int32(s.w), int32(s.h), s.dc, 0, 0, win.SRCCOPY)
+}
+
 // ---------------------------------------------------------------------------
 // Shapes
 // ---------------------------------------------------------------------------

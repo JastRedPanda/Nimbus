@@ -45,6 +45,19 @@ type Forecast struct {
 	Theme    string // "auto" | "dark" | "light"
 	WindUnit string // "ms" | "kmh"
 
+	// Appearance is "modern" | "system": the translucent undecorated sheet, or an
+	// ordinary window with a title bar and the desktop theme's colours.
+	//
+	// The empty string means modern, so a caller that never sets it gets the
+	// behaviour that existed before the option did - and so does any other value a
+	// backend does not recognise, which is why a backend must switch on "system"
+	// with a default arm rather than compare against "modern".
+	//
+	// Theme still applies in the modern look and still drives the tray icon; in the
+	// system look the desktop theme colours the panel instead, so the two settings
+	// are not alternatives to each other.
+	Appearance string
+
 	// Pinned reports the dismissal policy - Escape and focus loss are ignored
 	// while it is true - and is a function rather than a bool so that the panel
 	// asks again at the moment of each event. A bool captured when the panel
