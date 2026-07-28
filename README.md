@@ -107,33 +107,35 @@ Fields / Поля:
 
 #### Forecast panel appearance / Вигляд панелі прогнозу
 
-**Modern is the default and is what the panel has always looked like:** a
-translucent sheet with rounded corners, no title bar, and its own close button in
-the top corner. Its colours come from the app's palette, which the theme option
-picks.
+**System look is the default:** the panel is an ordinary application window -
+opaque, square corners, the window manager's title bar with its own close button,
+so there is no close button inside the panel. The colours come **from the desktop
+theme**, which is why the theme option (Auto / Dark / Light) has no say over the
+panel in this look; it still decides the tray icon and the other windows.
 
-**System look** turns the same panel into an ordinary application window: opaque,
-square corners, the window manager's title bar with the window manager's own close
-button - so there is no close button inside the panel any more, the title bar
-provides it. The colours come **from the desktop theme**, which is why the theme
-option (Auto / Dark / Light) no longer has any say over the panel in this look; it
-still decides the tray icon and the other windows.
+**Modern** is the other choice: a translucent sheet with rounded corners, no title
+bar, and its own close button in the top corner, coloured from the app's palette,
+which the theme option picks. It is what the panel looked like before the option
+existed - so a configuration file written earlier, which has no appearance key at
+all, now opens in the system look. That is a visible change after an upgrade, not
+a fault.
 
 Nothing else changes. In both looks the panel stays above other windows, stays off
 the taskbar and the pager, is visible on every workspace, is dragged by any part of
 its body, remembers where it was put, toggles from the tray icon, obeys the pinned
 option below, and shows exactly the same table.
 
-**Modern - типове значення, і це той вигляд, який панель мала завжди:**
-напівпрозоре полотно із заокругленими кутами, без заголовка, з власною кнопкою
-закриття в куті. Кольори беруться з палітри застосунку, яку вибирає опція теми.
+**Системний вигляд - типове значення:** панель є звичайним вікном застосунку -
+непрозорим, з прямими кутами, із заголовком і кнопкою закриття від менеджера вікон,
+тому власної кнопки закриття всередині панелі немає. Кольори беруться **з теми
+стільниці**, тому опція теми (Авто / Темна / Світла) в цьому вигляді на панель не
+впливає; вона й далі керує піктограмою в треї та іншими вікнами.
 
-**Системний вигляд** перетворює ту саму панель на звичайне вікно застосунку:
-непрозоре, з прямими кутами, із заголовком і кнопкою закриття від менеджера вікон
-- тому власної кнопки закриття всередині панелі більше немає, її роль виконує
-заголовок. Кольори беруться **з теми стільниці**, тому опція теми (Авто / Темна /
-Світла) в цьому вигляді на панель більше не впливає; вона й далі керує піктограмою
-в треї та іншими вікнами.
+**Modern** - друга можливість: напівпрозоре полотно із заокругленими кутами, без
+заголовка, з власною кнопкою закриття в куті та кольорами з палітри застосунку, яку
+вибирає опція теми. Саме так панель виглядала до появи цієї опції - тому файл
+конфігурації, написаний раніше і зовсім без ключа appearance, тепер відкривається в
+системному вигляді. Це помітна зміна після оновлення, а не помилка.
 
 Решта - як і було. В обох виглядах панель тримається поверх інших вікон, не
 показується в панелі задач і в перемикачі робочих столів, видима на всіх робочих

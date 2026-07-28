@@ -21,23 +21,21 @@ type Config struct {
 	Language       string  `json:"language"`
 	FontScale      int     `json:"font_scale"`
 
-	// Appearance chooses how the forecast panel is dressed: "modern" is the
-	// translucent, round-cornered, undecorated sheet with its own close button,
-	// and "system" is an ordinary application window - opaque, square, with the
-	// window manager's title bar and its colours taken from the desktop theme.
-	// Everything else about the panel is the same either way.
+	// Appearance chooses how the forecast panel is dressed: "system" is an ordinary
+	// application window - opaque, square, framed by the window manager and coloured
+	// by the desktop theme - and "modern" is the translucent, undecorated, rounded
+	// sheet with its own close button.
 	//
-	// The tag has no omitempty for the same reason ForecastPinned's has none, even
-	// though the failure looks different: neither legal value is the empty string,
-	// so omitempty would never fire today, which is exactly what makes it a trap -
-	// it would sit there stating that an empty value may be dropped, and the next
-	// edit that gives this field an empty-meaning-default would silently stop
-	// persisting the user's choice with nothing in the diff to point at.
+	// "system" is the default, so a configuration file written before this field
+	// existed gets it: Load unmarshals over Default(), and an absent key therefore
+	// means the system look rather than an empty string. That is a visible change
+	// for anyone upgrading, and it is deliberate.
 	//
-	// Readers must treat an unrecognised value as "modern" rather than trusting
-	// the string: it is a hand-editable file and a downgrade can leave a value this
-	// build has never heard of. Switch on "system" with a default arm - never
-	// compare against "modern", which would make every typo mean the system look.
+	// Load normalises anything it does not recognise back to the default, so the
+	// panels only ever see one of the two known values. They still switch on
+	// "system" with a default arm rather than comparing against "modern", because a
+	// caller that predates the field - a test, the web fallback - sends the empty
+	// string and must get a working panel rather than nothing.
 	Appearance string `json:"appearance"`
 
 	// ForecastPinned keeps the forecast panel on screen until the tray icon or
@@ -75,7 +73,7 @@ func Default() *Config {
 		IconTheme:      "auto",
 		Language:       "en",
 		FontScale:      100,
-		Appearance:     "modern",
+		Appearance:     "system",
 		ForecastPinned: true,
 	}
 }
@@ -111,6 +109,12 @@ func Load() (*Config, error) {
 	cfg := Default()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return Default(), err
+	}
+	// A hand-edited file can hold anything. Normalising here rather than in every
+	// consumer means one place knows the vocabulary, and a typo like "System" gets
+	// the default instead of silently selecting the other look.
+	if cfg.Appearance != "modern" && cfg.Appearance != "system" {
+		cfg.Appearance = Default().Appearance
 	}
 	return cfg, nil
 }

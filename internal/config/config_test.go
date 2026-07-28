@@ -134,12 +134,12 @@ func TestLoadConfigWithoutForecastKeys(t *testing.T) {
 	}
 }
 
-func TestDefaultAppearanceIsModern(t *testing.T) {
+func TestDefaultAppearanceIsSystem(t *testing.T) {
 	// Modern is today's panel, so a fresh config must ask for it: an empty string
 	// here would reach the backends as "no look chosen" and rely on every one of
 	// them treating that as modern, instead of the config saying which it is.
-	if got := Default().Appearance; got != "modern" {
-		t.Errorf("Default().Appearance = %q, want \"modern\"", got)
+	if got := Default().Appearance; got != "system" {
+		t.Errorf("Default().Appearance = %q, want \"system\"", got)
 	}
 }
 
@@ -178,11 +178,11 @@ func TestAppearanceSystemRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLoadConfigWithoutAppearanceLoadsModern covers the upgrade path: a file
+// TestLoadConfigWithoutAppearanceLoadsSystem covers the upgrade path: a file
 // written before the option existed has no appearance key, and the panel must
 // look exactly as it did before rather than switching to the system look because
 // the field arrived empty.
-func TestLoadConfigWithoutAppearanceLoadsModern(t *testing.T) {
+func TestLoadConfigWithoutAppearanceLoadsSystem(t *testing.T) {
 	dir := redirectConfigDir(t)
 	if err := os.MkdirAll(filepath.Join(dir, "Nimbus"), 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -202,8 +202,8 @@ func TestLoadConfigWithoutAppearanceLoadsModern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Appearance != "modern" {
-		t.Errorf("Appearance = %q for a config that predates the field, want the \"modern\" from Default()", cfg.Appearance)
+	if cfg.Appearance != "system" {
+		t.Errorf("Appearance = %q for a config that predates the field, want the \"system\" from Default()", cfg.Appearance)
 	}
 }
 
@@ -396,5 +396,26 @@ func TestForecastPositionAbsentLoadsNil(t *testing.T) {
 	}
 	if got.ForecastX != nil || got.ForecastY != nil {
 		t.Errorf("position = (%v, %v) for a never-dragged panel, want (nil, nil)", got.ForecastX, got.ForecastY)
+	}
+}
+
+// TestLoadNormalisesAnUnknownAppearance pins the rule that keeps the vocabulary in
+// one place: the file is hand-editable, and a value neither panel knows must come
+// back as the default rather than silently selecting the other look.
+func TestLoadNormalisesAnUnknownAppearance(t *testing.T) {
+	redirectConfigDir(t)
+
+	cfg := Default()
+	cfg.Appearance = "Modern" // capitalised: a plausible hand edit, and not a value we know
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Appearance != Default().Appearance {
+		t.Errorf("Appearance = %q for an unrecognised value, want the default %q",
+			got.Appearance, Default().Appearance)
 	}
 }
