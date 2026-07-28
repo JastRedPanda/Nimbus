@@ -15,6 +15,22 @@ permissions:
   contents: write
   packages: write
 
+# Three products, four jobs.
+#
+#   nimbus.exe    Windows.
+#   nimbus-gtk    Linux, GTK windows, no Qt in it.
+#   nimbus-qt     Linux, Qt windows, no GTK in it.
+#
+# WHY THE QT JOB RUNS IN A CONTAINER and the other two do not. Everything else
+# here is built with CGO_ENABLED=0 and needs no versioned glibc symbol at all, so
+# the machine it is built on cannot restrict where it runs. The Qt shim is the one
+# exception: it is compiled by cgo against the build machine's glibc, libstdc++
+# and Qt, and those become the floor it will run on. ubuntu:22.04 is the oldest
+# image that carries Qt 6, so the floor is chosen deliberately rather than
+# inherited from whatever the hosted runner happens to be this month. The job
+# measures the result and fails if that floor ever rises - see "Check the ABI
+# floor".
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -22,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: 'go.mod'
       - name: Build binary
         shell: bash
         run: |
@@ -38,92 +54,119 @@ jobs:
           name: nimbus-windows
           path: nimbus.exe
 
-  build-linux:
+  build-linux-gtk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev dpkg-dev rpm reprepro createrepo-c gnupg golang
-      - name: Generate GPG keys
-        run: |
-          gpg --batch --passphrase '' --quick-gen-key nimbus-ci default default
-          gpg --armor --export nimbus-ci > public.key
-      - name: Build binary
+          go-version-file: 'go.mod'
+      # No GTK development package: the binary is pure Go and loads the library
+      # at runtime with dlopen, so no headers and no pkg-config are involved.
+      - run: sudo apt-get update && sudo apt-get install -y dpkg-dev rpm
+      - name: Build binary and packages
         run: |
           VER="${{ github.event.inputs.tag || github.ref_name }}"
           VER="${VER#v}"
-          CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/JastRedPanda/Nimbus/internal/build.Version=${VER} -X github.com/JastRedPanda/Nimbus/internal/build.Date=$(date +%m.%Y)" -o nimbus .
-      - name: Build .deb
-        run: |
-          VER="${{ github.event.inputs.tag || github.ref_name }}"
-          VER="${VER#v}"
-          mkdir -p dist/debian/nimbus/DEBIAN
-          mkdir -p dist/debian/nimbus/usr/bin
-          mkdir -p dist/debian/nimbus/usr/share/applications
-          mkdir -p dist/debian/nimbus/usr/share/pixmaps
-          mkdir -p dist/debian/nimbus/usr/share/doc/nimbus
-          install -m 755 nimbus dist/debian/nimbus/usr/bin/
-          install -m 644 dist/nimbus.desktop dist/debian/nimbus/usr/share/applications/
-          install -m 644 nimbus1.png dist/debian/nimbus/usr/share/pixmaps/nimbus.png
-          install -m 644 LICENSE THIRD-PARTY-LICENSES dist/debian/nimbus/usr/share/doc/nimbus/
-          sed "s/^Version:.*/Version: ${VER}/" dist/debian/control > dist/debian/nimbus/DEBIAN/control
-          dpkg-deb --build dist/debian/nimbus "dist/nimbus_${VER}-1_amd64.deb"
-      - name: Build .rpm
-        run: |
-          VER="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${VER#v}"
-          mkdir -p dist/rpm/BUILD/build-rpm dist/rpm/RPMS dist/rpm/SRPMS
-          cp nimbus nimbus1.png LICENSE THIRD-PARTY-LICENSES dist/rpm/BUILD/build-rpm/
-          sed "s/^Version:.*/Version: ${VERSION}/" dist/rpm/nimbus.spec > dist/rpm/nimbus_tmp.spec
-          rpmbuild -bb --nodeps --define "_topdir $(pwd)/dist/rpm" dist/rpm/nimbus_tmp.spec 2>&1 || true
-          find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \; 2>/dev/null || true
-      - name: Sign packages
-        run: |
-          if ls dist/*.deb 2>/dev/null; then
-            gpg --batch --passphrase '' --detach-sign --armor dist/*.deb
-          fi
-          if ls dist/*.rpm 2>/dev/null; then
-            echo "%_gpg_name nimbus-ci" > ~/.rpmmacros
-            rpm --addsign dist/*.rpm
-          fi
+          make deb-gtk VERSION="${VER}"
+          make rpm-gtk VERSION="${VER}"
+          find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \;
       - uses: actions/upload-artifact@v4
         with:
-          name: nimbus-linux
+          name: nimbus-linux-gtk
           path: |
-            dist/nimbus_*.deb
-            dist/nimbus_*.deb.asc
-            dist/nimbus-*.rpm
-            public.key
-            nimbus
+            dist/nimbus-gtk_*.deb
+            dist/nimbus-gtk-*.rpm
+            build/nimbus-gtk
+
+  build-linux-qt:
+    runs-on: ubuntu-latest
+    # The floor, stated once: Qt 6.2.4, glibc 2.35, GCC 11. The shim built here
+    # comes out needing no more than GLIBC_2.34 and GLIBCXX_3.4, which is what
+    # lets one build serve Ubuntu 22.04, Debian 12, Fedora and RHEL 9 alike.
+    container: ubuntu:22.04
+    steps:
+      - name: Install the toolchain
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          # qt6-base-dev is needed to BUILD the shim and nothing else: the
+          # released binary carries it inside and links nothing at build time.
+          # objdump, used by the ABI check below, arrives with g++.
+          apt-get install -y -qq qt6-base-dev g++ make dpkg-dev rpm git curl ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Build the Qt shim
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make shim
+      - name: Check the ABI floor
+        run: |
+          # The promise this job exists to keep, checked rather than assumed.
+          # RHEL 9, Rocky 9 and AlmaLinux 9 all ship glibc 2.34; a shim that needed
+          # more would still install there and then silently fall back to the
+          # browser, which is the worst possible way to find out.
+          FLOOR=$(objdump -T internal/qt/libnimbusqt.so | grep -oE 'GLIBC_[0-9.]+' | sort -V | tail -1)
+          MAX=GLIBC_2.34
+          echo "the shim needs at most ${FLOOR}; the ceiling is ${MAX}"
+          if [ "$(printf '%s\n%s\n' "$FLOOR" "$MAX" | sort -V | tail -1)" != "$MAX" ]; then
+            echo "::error::the Qt shim now requires ${FLOOR}; glibc 2.34 distributions would fall back to the browser"
+            exit 1
+          fi
+      - name: Build binary and packages
+        run: |
+          VER="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${VER#v}"
+          make deb-qt VERSION="${VER}"
+          make rpm-qt VERSION="${VER}"
+          find dist/rpm/RPMS -name '*.rpm' -exec mv {} dist/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nimbus-linux-qt
+          path: |
+            dist/nimbus-qt_*.deb
+            dist/nimbus-qt-*.rpm
+            build/nimbus-qt
 
   publish:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux-gtk, build-linux-qt]
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: nimbus-windows
           path: artifacts
-      - uses: actions/download-artifact@v4
-        with:
-          name: nimbus-linux
-          path: artifacts
+          merge-multiple: true
+      # Signing happens here rather than in the build jobs, so that all four
+      # packages are signed with ONE key from one run instead of two keys that
+      # have nothing to do with each other.
+      - name: Sign packages
+        run: |
+          sudo apt-get update && sudo apt-get install -y rpm gnupg
+          gpg --batch --passphrase '' --quick-gen-key nimbus-ci default default
+          gpg --armor --export nimbus-ci > artifacts/public.key
+          cd artifacts
+          if ls *.deb >/dev/null 2>&1; then
+            gpg --batch --passphrase '' --detach-sign --armor *.deb
+          fi
+          if ls *.rpm >/dev/null 2>&1; then
+            echo "%_gpg_name nimbus-ci" > ~/.rpmmacros
+            rpm --addsign *.rpm
+          fi
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd artifacts
-          # Only upload actual distributables: Windows .exe, Linux binary, .deb, .rpm
-          FILES=$(find . -type f \( -name "*.exe" -o -name "nimbus" -o -name "*.deb" -o -name "*.rpm" \) ! -name "*.asc" | tr '\n' ' ')
-          # Skip if release already exists
+          # Only actual distributables: the two Linux binaries, the Windows exe
+          # and the four packages. Detached signatures stay out of the asset list.
+          FILES=$(find . -type f \( -name "*.exe" -o -name "nimbus-gtk" -o -name "nimbus-qt" -o -name "*.deb" -o -name "*.rpm" \) ! -name "*.asc" | tr '\n' ' ')
           if gh release view "${RELEASE_TAG}" --repo ${{ github.repository }} &>/dev/null; then
             echo "Release ${RELEASE_TAG} already exists, uploading assets..."
             gh release upload "${RELEASE_TAG}" $FILES --repo ${{ github.repository }} --clobber
           else
             gh release create "${RELEASE_TAG}" --repo ${{ github.repository }} --title "${RELEASE_TAG}" --notes "See [README](https://github.com/JastRedPanda/Nimbus#readme)" $FILES
           fi
-

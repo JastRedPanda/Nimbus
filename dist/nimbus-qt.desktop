@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Nimbus (Qt)
+Comment=Weather tray app
+Exec=nimbus-qt
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+Icon=nimbus-qt

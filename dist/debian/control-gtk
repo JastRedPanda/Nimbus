@@ -1,12 +1,19 @@
-Package: nimbus
+Package: nimbus-gtk
 Version: 1.0.0
 Architecture: amd64
 Maintainer: JastRedPanda <jastredpanda@users.noreply.github.com>
-Recommends: libgtk-3-0
+Depends: libgtk-3-0t64 | libgtk-3-0
+Provides: nimbus
+Conflicts: nimbus
+Replaces: nimbus
 Section: utils
 Priority: optional
 Homepage: https://github.com/JastRedPanda/Nimbus
-Description: Weather tray app with 7-day forecast and settings GUI
+Description: Weather tray app with 7-day forecast and settings GUI (GTK)
  Nimbus displays current temperature and weather conditions in the
  system tray. Features 7-day forecast, configurable units, themes,
  and language support (English/Українська).
+ .
+ This build draws its windows with GTK 3. For a Qt desktop - Plasma,
+ LXQt, Deepin - install nimbus-qt instead; the two can be installed
+ side by side and share one configuration file.

@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Nimbus
+Name=Nimbus (GTK)
 Comment=Weather tray app
-Exec=nimbus
+Exec=nimbus-gtk
 Terminal=false
 Categories=Utility;
 StartupNotify=false
-Icon=nimbus
+Icon=nimbus-gtk
