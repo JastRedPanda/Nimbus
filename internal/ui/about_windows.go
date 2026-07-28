@@ -5,6 +5,7 @@ package ui
 import (
 	"bytes"
 	_ "embed"
+	"github.com/JastRedPanda/Nimbus/internal/build"
 	"image"
 	_ "image/png"
 	"log"
@@ -27,8 +28,7 @@ const (
 	// paints over the button first and the button repaints on top, which flashes.
 	// It does not affect AdjustWindowRect, so frameOverhead and layoutDPI are
 	// unchanged by it.
-	aboutStyle    = win.WS_CAPTION | win.WS_SYSMENU | win.WS_CLIPCHILDREN
-	aboutSubtitle = "Мультиплатформний інформер погоди."
+	aboutStyle = win.WS_CAPTION | win.WS_SYSMENU | win.WS_CLIPCHILDREN
 
 	// Layout in 96-DPI units, top to bottom: padding, logo, title, subtitle,
 	// version, padding. Everything goes through dp() on its way to Win32, so
@@ -476,7 +476,7 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 
 	win.SelectObject(hdc, d.font(d.bodyFont))
 	pad := d.dp(aboutPad)
-	d.text(hdc, aboutSubtitle, pad, y, cw-pad, d.dp(aboutSubtitleH), win.DT_CENTER|win.DT_WORDBREAK)
+	d.text(hdc, build.Subtitle, pad, y, cw-pad, d.dp(aboutSubtitleH), win.DT_CENTER|win.DT_WORDBREAK)
 	y += d.dp(aboutVerGap)
 
 	// The version sits below the subtitle in a muted grey that reads on both

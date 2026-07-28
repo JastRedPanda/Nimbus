@@ -586,3 +586,21 @@ func formatWind(speed float64, windUnit string, l Lang) string {
 	s := convertWind(speed, windUnit)
 	return fmt.Sprintf("%.0f %s", s, windUnitLabel(windUnit, l))
 }
+
+// ForecastFailed and CloseLabel are the wording of the one error the forecast
+// can raise. They live here rather than beside a panel because there are now
+// three panels - GTK, Win32 and Qt - and a string written once per backend is a
+// string that drifts once per backend.
+func (l Lang) ForecastFailed() string {
+	if l == UK {
+		return "Не вдалося завантажити прогноз."
+	}
+	return "Failed to load forecast."
+}
+
+func (l Lang) CloseLabel() string {
+	if l == UK {
+		return "Закрити"
+	}
+	return "Close"
+}

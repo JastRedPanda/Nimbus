@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !qt
 
 package ui
 
@@ -184,7 +184,7 @@ func showForecast(req gui.Forecast) {
 			}
 			if err != nil || len(data) == 0 {
 				ensureAppIcon()
-				gtk.ShowError(appName, forecastFailed(l), "", closeLabel(l))
+				gtk.ShowError(appName, l.ForecastFailed(), "", l.CloseLabel())
 				return
 			}
 			buildForecast(data, req, l, s.at)
@@ -776,9 +776,9 @@ func forecastTable(data []weather.DailyForecast, units, windUnit string, l i18n.
 			grid.Attach(sym, 1, row, 1, 1)
 		}
 
-		grid.Attach(dataCell(tempRange(d, units, l), 2), 2, row, 1, 1)
-		grid.Attach(dataCell(windSpeed(d, windUnit, l), 3), 3, row, 1, 1)
-		grid.Attach(dataCell(precip(d, l), 4), 4, row, 1, 1)
+		grid.Attach(dataCell(weather.TempRange(d, units, l), 2), 2, row, 1, 1)
+		grid.Attach(dataCell(weather.WindSpeed(d, windUnit, l), 3), 3, row, 1, 1)
+		grid.Attach(dataCell(weather.Precip(d, l), 4), 4, row, 1, 1)
 
 		row++
 	}
@@ -1000,18 +1000,4 @@ func paletteForeground(palette string) color.NRGBA {
 
 func luminance(c color.NRGBA) float64 {
 	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
-}
-
-func forecastFailed(l i18n.Lang) string {
-	if l == i18n.UK {
-		return "Не вдалося завантажити прогноз."
-	}
-	return "Failed to load forecast."
-}
-
-func closeLabel(l i18n.Lang) string {
-	if l == i18n.UK {
-		return "Закрити"
-	}
-	return "Close"
 }

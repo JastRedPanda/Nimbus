@@ -1,9 +1,10 @@
-//go:build linux
+//go:build linux && !qt
 
 package ui
 
 import (
 	_ "embed"
+	"github.com/JastRedPanda/Nimbus/internal/build"
 	"image"
 	"log"
 	"strings"
@@ -19,8 +20,7 @@ const (
 	aboutWidth = 320
 	// -1 lets GTK size the window to its natural content height instead of
 	// leaving the dead space a fixed height would.
-	aboutHeight   = -1
-	aboutSubtitle = "Мультиплатформний інформер погоди."
+	aboutHeight = -1
 
 	// The OK button is a third of the window wide and centred. Win32 carries the
 	// same fraction of the same 320 units in aboutBtnW, so the two windows agree.
@@ -74,7 +74,7 @@ func buildAbout(theme string) {
 		}
 	}
 	gtk.PackStart(box, gtk.NewLabel(`<span size="xx-large" weight="bold">Nimbus</span>`), false, false, 0)
-	gtk.PackStart(box, gtk.NewText(aboutSubtitle), false, false, 0)
+	gtk.PackStart(box, gtk.NewText(build.Subtitle), false, false, 0)
 	// Muted with an explicit grey rather than a theme colour: this window uses
 	// the desktop theme, and mid-grey is legible against both a light and a
 	// dark one.

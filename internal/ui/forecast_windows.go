@@ -385,7 +385,7 @@ func showForecast(req gui.Forecast) {
 			} else {
 				log.Printf("forecast: fetch returned no days")
 			}
-			showError(forecastFailed(l))
+			showError(l.ForecastFailed())
 			return
 		}
 
@@ -426,13 +426,6 @@ func showError(msg string) {
 var errorBoxFree atomic.Bool
 
 func init() { errorBoxFree.Store(true) }
-
-func forecastFailed(l i18n.Lang) string {
-	if l == i18n.UK {
-		return "Не вдалося завантажити прогноз."
-	}
-	return "Failed to load forecast."
-}
 
 // ---------------------------------------------------------------------------
 // The panel
@@ -651,9 +644,9 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 		// same in both languages.
 		row.cell[0] = d.Date
 		row.cell[colCond] = fonts.IconForCode(d.WeatherCode)
-		row.cell[2] = tempRange(d, req.Units, l)
-		row.cell[3] = windSpeed(d, req.WindUnit, l)
-		row.cell[4] = precip(d, l)
+		row.cell[2] = weather.TempRange(d, req.Units, l)
+		row.cell[3] = weather.WindSpeed(d, req.WindUnit, l)
+		row.cell[4] = weather.Precip(d, l)
 		p.rows = append(p.rows, row)
 	}
 	return p

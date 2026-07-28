@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !qt
 
 package ui
 
@@ -28,18 +28,6 @@ const (
 	// across the whole range costs a handful of regenerations instead of a hundred.
 	fontScaleSettle = 150 * time.Millisecond
 )
-
-// Update intervals in minutes, with the captions the dropdown shows.
-var intervals = []struct {
-	minutes int
-	label   string
-}{
-	{5, "5 min"},
-	{30, "30 min"},
-	{60, "1 hour"},
-	{720, "12 hours"},
-	{1440, "24 hours"},
-}
 
 // settingsOpen is read and written only on the GTK thread.
 var settingsOpen bool
@@ -133,15 +121,15 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	gtk.PackStart(page, cityFrame(l, city, lat, lon), false, false, 0)
 
 	temp := radioFrame(page, l.TemperatureGroup(), []string{"°C", "°F"},
-		index(cfg.Units, "celsius", "fahrenheit"))
+		config.Index(cfg.Units, "celsius", "fahrenheit"))
 	pressure := radioFrame(page, l.PressureGroup(), []string{l.HPa(), l.MmHg(), l.InHg()},
-		index(cfg.PressureUnit, "hpa", "mmhg", "inhg"))
+		config.Index(cfg.PressureUnit, "hpa", "mmhg", "inhg"))
 	wind := radioFrame(page, l.WindGroup(), []string{l.WindMS(), l.WindKMH()},
-		index(cfg.WindUnit, "ms", "kmh"))
+		config.Index(cfg.WindUnit, "ms", "kmh"))
 	theme := radioFrame(page, l.ThemeGroup(), []string{l.ThemeAuto(), l.ThemeDark(), l.ThemeLight()},
-		index(cfg.IconTheme, "auto", "dark", "light"))
+		config.Index(cfg.IconTheme, "auto", "dark", "light"))
 	lang := radioFrame(page, l.LanguageGroup(), []string{"English", "Українська"},
-		index(cfg.Language, "en", "uk"))
+		config.Index(cfg.Language, "en", "uk"))
 
 	scale := sliderFrame(page, l, cfg.FontScale, onFontScale)
 
@@ -161,7 +149,7 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	// caption in the row costs the row. The pin checkbox below is frameless for the
 	// same reason and says so.
 	appearance := radioRow(page, l.AppearanceGroup(), []string{l.LookModern(), l.LookSystem()},
-		index(cfg.Appearance, "modern", "system"))
+		config.Index(cfg.Appearance, "modern", "system"))
 
 	// Straight into the page, with no frame around it either. A titled border
 	// holding a single checkbox is chrome for nothing, and the checkbox's own label
@@ -169,19 +157,19 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 	pin := gtk.NewCheck(l.PinForecast(), cfg.ForecastPinned)
 	gtk.PackStart(page, uintptr(pin), false, false, 0)
 
-	interval := gtk.NewCombo(intervalLabels(), intervalIndex(cfg.UpdateInterval))
+	interval := gtk.NewCombo(config.IntervalLabels(), config.IntervalIndex(cfg.UpdateInterval))
 	gtk.PackStart(page, gtk.NewFrame(l.UpdateInterval(), uintptr(interval)), false, false, 0)
 
 	save := gtk.NewButton(l.SaveBtn(), func() {
 		nc := *cfg
 		nc.CityName = city.Text()
-		nc.Latitude = parseCoord(lat.Text(), cfg.Latitude)
-		nc.Longitude = parseCoord(lon.Text(), cfg.Longitude)
-		nc.Units = pick(temp.Active(), "celsius", "fahrenheit")
-		nc.PressureUnit = pick(pressure.Active(), "hpa", "mmhg", "inhg")
-		nc.WindUnit = pick(wind.Active(), "ms", "kmh")
-		nc.IconTheme = pick(theme.Active(), "auto", "dark", "light")
-		nc.Language = pick(lang.Active(), "en", "uk")
+		nc.Latitude = config.ParseCoord(lat.Text(), cfg.Latitude)
+		nc.Longitude = config.ParseCoord(lon.Text(), cfg.Longitude)
+		nc.Units = config.Pick(temp.Active(), "celsius", "fahrenheit")
+		nc.PressureUnit = config.Pick(pressure.Active(), "hpa", "mmhg", "inhg")
+		nc.WindUnit = config.Pick(wind.Active(), "ms", "kmh")
+		nc.IconTheme = config.Pick(theme.Active(), "auto", "dark", "light")
+		nc.Language = config.Pick(lang.Active(), "en", "uk")
 		nc.FontScale = scale.Value()
 		// Only when the buttons were actually built. Active answers -1 for a group
 		// with no members, and pick turns any out-of-range index into the first
@@ -189,7 +177,7 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		// user who had chosen the system look and was never shown either button.
 		// nc carries the stored value forward instead.
 		if i := appearance.Active(); i >= 0 {
-			nc.Appearance = pick(i, "modern", "system")
+			nc.Appearance = config.Pick(i, "modern", "system")
 		}
 		// Only when the box was actually built. A Check that could not be
 		// created reads as unticked, and writing that would turn off an option
@@ -197,8 +185,8 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		if pin != 0 {
 			nc.ForecastPinned = pin.Active()
 		}
-		if i := interval.Active(); i >= 0 && i < len(intervals) {
-			nc.UpdateInterval = intervals[i].minutes
+		if i := interval.Active(); i >= 0 && i < len(config.Intervals) {
+			nc.UpdateInterval = config.Intervals[i].Minutes
 		}
 		// The error is logged rather than swallowed: Save has eight ways to fail
 		// now that it writes through a temp file, and a silent failure here means
@@ -380,41 +368,6 @@ func sliderFrame(page uintptr, l i18n.Lang, value int, onFontScale func(int)) gt
 	gtk.PackStart(row, readout, false, false, 0)
 	gtk.PackStart(page, gtk.NewFrame(l.FontScaleGroup(), row), false, false, 0)
 	return slider
-}
-
-func intervalLabels() []string {
-	out := make([]string, len(intervals))
-	for i, iv := range intervals {
-		out[i] = iv.label
-	}
-	return out
-}
-
-func intervalIndex(minutes int) int {
-	for i, iv := range intervals {
-		if iv.minutes == minutes {
-			return i
-		}
-	}
-	return 0
-}
-
-// index maps a stored config value to its position among the options. An
-// unknown value falls back to the first, which is what the config defaults to.
-func index(value string, options ...string) int {
-	for i, o := range options {
-		if o == value {
-			return i
-		}
-	}
-	return 0
-}
-
-func pick(i int, options ...string) string {
-	if i < 0 || i >= len(options) {
-		return options[0]
-	}
-	return options[i]
 }
 
 // parseCoord keeps the previous value when the field holds nonsense, rather

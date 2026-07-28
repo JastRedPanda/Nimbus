@@ -13,7 +13,7 @@ import (
 
 	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
-	"github.com/JastRedPanda/Nimbus/internal/gtk"
+	"github.com/JastRedPanda/Nimbus/internal/gui"
 )
 
 // quitGrace is how long a quit request is given to end the process the ordinary
@@ -30,11 +30,18 @@ var (
 	quitOnce sync.Once
 	quitCh   = make(chan struct{})
 
-	// usingGTK records the decision Run actually made, which is what quit has to
-	// act on. gtk.Ready() answers a different question - whether GTK COULD be
-	// used - and the two agreeing today is an accident of ordering rather than a
-	// guarantee. Written before any goroutine that reads it is started.
-	usingGTK bool
+	// usingToolkit records the decision Run actually made about THIS file's own
+	// loop, which is what quit has to act on. Asking the toolkit whether it could
+	// be used answers a different question, and the two agreeing today is an
+	// accident of ordering rather than a guarantee. Written before any goroutine
+	// that reads it is started, and always false in a build whose backend brings
+	// its own loop - see toolkit_qt.go.
+	usingToolkit bool
+
+	// loop is the chosen backend's own event loop, when it has one - Qt does, GTK
+	// does not, because the GTK loop belongs to this package. Written before
+	// start() and read by quit afterwards, so the ordering needs no lock.
+	loop gui.Looper
 
 	// loopReturned only sharpens the wording of the watchdog's log line, telling
 	// a loop that refused to return apart from a teardown that hung after it. The
@@ -42,21 +49,19 @@ var (
 	loopReturned atomic.Bool
 )
 
-// Run owns the GTK main loop for the process and runs the tray alongside it on
-// its own D-Bus goroutine.
+// Run owns the process's main loop and runs the tray alongside it on its own
+// D-Bus goroutine.
 //
-// The tray library is pure Go and starts no toolkit of its own, so if Nimbus
-// did not run GTK here there would be no loop at all and every native window
+// WHOSE loop that is depends on the build. The GTK build runs GTK's, started
+// here in toolkit_gtk.go; the Qt build runs the backend's own through
+// gui.Looper. The tray library itself is pure Go and starts no toolkit at all,
+// so without one of the two there would be no loop, and every native window
 // would quietly fall back to the browser UI.
 func Run(cfg *config.Config) {
-	// gtk_init and gtk_main have to happen on one and the same OS thread. A
-	// goroutine can be migrated between them otherwise - not while blocked
-	// inside the loop, but during Init itself, which is enough to break GTK.
-	gtk.LockThread()
-	usingGTK = gtk.Init() == nil
-	if !usingGTK {
-		log.Print("tray: GTK unavailable, windows will open in the browser")
-	}
+	// Whatever toolkit this build was compiled with, started here and on this
+	// thread. In a build whose backend owns its own loop this does nothing at
+	// all - see toolkit_qt.go.
+	toolkitInit()
 
 	a := newApp(cfg)
 	start, end := systray.RunWithExternalLoop(a.ready, func() {})
@@ -74,12 +79,19 @@ func Run(cfg *config.Config) {
 
 	start()
 
-	if usingGTK {
-		gtk.Main()
-	} else {
+	// Which loop this process runs is the chosen backend's business, and asking
+	// here is what forces the choice to be made - before this, selection happened
+	// lazily on the first window. A backend with a loop of its own owns the thread
+	// from now until quit; everything else falls through to the arrangement that
+	// was here before.
+	if l, ok := gui.Current().(gui.Looper); ok {
+		loop = l
+		usingToolkit = false
+		loop.Run()
+	} else if !toolkitRun() {
 		// The tray speaks D-Bus and needs no toolkit at all, so on a machine
-		// with no GTK the icon, its menu and its tooltip still work and only
-		// the windows degrade. Something has to block here regardless: without
+		// where the toolkit is missing the icon, its menu and its tooltip still
+		// work and only the windows degrade. Something has to block here regardless: without
 		// it the process falls straight through to end() and the icon appears
 		// and vanishes.
 		<-quitCh
@@ -106,18 +118,14 @@ func Run(cfg *config.Config) {
 func quit() {
 	log.Print("tray: quit requested")
 
-	if usingGTK {
-		// Invoke can only fail when the GTK libraries never loaded, which means
-		// there is no loop to post to at all - precisely the case the fallback
-		// exists for. Log it and fall through rather than returning, because the
-		// user still asked to quit.
-		if err := gtk.Invoke(gtk.MainQuit); err != nil {
-			log.Printf("tray: cannot reach the GTK loop, the exit will have to be forced: %v", err)
-		}
+	if loop != nil {
+		loop.Quit()
 	}
 
-	// Always, on both paths: Run itself reads this channel when there is no GTK
-	// loop to end, and the watchdog reads it either way.
+	toolkitQuit()
+
+	// Always, on every path: Run itself reads this channel when there is no
+	// toolkit loop to end, and the watchdog reads it either way.
 	quitOnce.Do(func() { close(quitCh) })
 }
 

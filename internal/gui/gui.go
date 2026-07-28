@@ -136,6 +136,21 @@ type Backend interface {
 	Error(title, message string)
 }
 
+// Looper is implemented by a backend that owns an event loop of its own.
+//
+// Most backends do not: the browser fallback has no loop, the null one draws
+// nothing, and the GTK backend's loop belongs to the process rather than to the
+// backend - internal/tray has run it since before this contract existed, and
+// moving it would be churn for nothing. A toolkit that has to be started and
+// stopped as a unit, as Qt does, says so by implementing this instead.
+//
+// Run blocks until Quit, and owns the goroutine's OS thread for that whole time.
+// Quit may be called from any goroutine.
+type Looper interface {
+	Run()
+	Quit()
+}
+
 // Factory describes a backend that MIGHT be usable on this machine.
 type Factory struct {
 	// Name is matched against EnvBackend.

@@ -1,28 +1,18 @@
-//go:build linux
+//go:build linux && !qt
 
 package ui
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/draw"
 	_ "image/png"
 	"log"
 	"sync"
 
+	"github.com/JastRedPanda/Nimbus/internal/appicon"
 	"github.com/JastRedPanda/Nimbus/internal/gtk"
 )
-
-// Both sizes come from nimbusicon.ico, the same artwork the Windows build uses:
-// 32 is the icon's own frame, drawn for title bars, and 128 covers the window
-// switcher and HiDPI without the window manager having to rescale the small one.
-//
-//go:embed appicon32.png
-var appIcon32PNG []byte
-
-//go:embed appicon128.png
-var appIcon128PNG []byte
 
 // appName titles windows that have no better caption of their own, matching the
 // Win32 backend's MessageBox title.
@@ -35,7 +25,7 @@ var appIconOnce sync.Once
 func ensureAppIcon() {
 	appIconOnce.Do(func() {
 		var imgs []gtk.Image
-		for _, data := range [][]byte{appIcon32PNG, appIcon128PNG} {
+		for _, data := range appicon.All() {
 			img := decodeRGBA(data)
 			if img == nil {
 				continue

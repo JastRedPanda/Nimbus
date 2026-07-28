@@ -23,6 +23,15 @@ import (
 //go:embed weathericons.ttf
 var weatherIconsTTF []byte
 
+// TTF is the typeface itself, for a toolkit that would rather register a font
+// from memory than be handed rasterised pixels. Qt is one: QFontDatabase takes
+// the bytes and then draws the glyph at whatever size and colour a QLabel asks
+// for, which is a better deal than a bitmap per cell.
+//
+// It returns the package's own slice rather than a copy. Nothing writes to it,
+// and the one caller hands it straight to a C function that reads it once.
+func TTF() []byte { return weatherIconsTTF }
+
 const (
 	WiDaySunny     = "\uf00d"
 	WiDayCloudy    = "\uf002"

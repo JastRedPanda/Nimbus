@@ -92,17 +92,6 @@ var (
 	settingsHWND atomic.Uintptr
 )
 
-var intervals = []struct {
-	minutes int
-	label   string
-}{
-	{5, "5 min"},
-	{30, "30 min"},
-	{60, "1 hour"},
-	{720, "12 hours"},
-	{1440, "24 hours"},
-}
-
 type setDlg struct {
 	hwnd win.HWND
 	inst win.HINSTANCE
@@ -539,11 +528,11 @@ func (d *setDlg) combo(x, y, w, dropH int, id int32, curMinutes int) {
 	}
 	d.adopt(hwnd)
 	sel := 0
-	for i, iv := range intervals {
-		lb := syscall.StringToUTF16(iv.label)
+	for i, iv := range config.Intervals {
+		lb := syscall.StringToUTF16(iv.Label)
 		win.SendMessage(hwnd, win.CB_ADDSTRING, 0, uintptr(unsafe.Pointer(&lb[0])))
 		runtime.KeepAlive(lb)
-		if iv.minutes == curMinutes {
+		if iv.Minutes == curMinutes {
 			sel = i
 		}
 	}
@@ -751,8 +740,8 @@ func (d *setDlg) onDeleteCfg() {
 func (d *setDlg) onSave() {
 	nc := *d.cfg
 	nc.CityName = d.getText(ID_CITY_EDIT)
-	nc.Latitude = parseCoord(d.getText(ID_LAT_EDIT), d.cfg.Latitude)
-	nc.Longitude = parseCoord(d.getText(ID_LON_EDIT), d.cfg.Longitude)
+	nc.Latitude = config.ParseCoord(d.getText(ID_LAT_EDIT), d.cfg.Latitude)
+	nc.Longitude = config.ParseCoord(d.getText(ID_LON_EDIT), d.cfg.Longitude)
 
 	if d.isChecked(ID_TEMP_F) {
 		nc.Units = "fahrenheit"
@@ -800,8 +789,8 @@ func (d *setDlg) onSave() {
 		nc.ForecastPinned = d.isChecked(ID_PIN_FORECAST)
 	}
 
-	if sel := d.getComboSel(ID_INTERVAL); sel >= 0 && sel < len(intervals) {
-		nc.UpdateInterval = intervals[sel].minutes
+	if sel := d.getComboSel(ID_INTERVAL); sel >= 0 && sel < len(config.Intervals) {
+		nc.UpdateInterval = config.Intervals[sel].Minutes
 	}
 
 	if err := nc.Save(); err != nil {
@@ -810,10 +799,6 @@ func (d *setDlg) onSave() {
 	d.finish(&nc)
 	win.DestroyWindow(d.hwnd)
 }
-
-// parseCoord keeps the previous value when the field holds nonsense, rather
-// than silently moving the user to the Gulf of Guinea. It is the same rule the
-// GTK backend applies, down to using the same parser.
 
 // The createX helpers below take device pixels. Everything in this file goes
 // through the setDlg methods above, which scale for DPI first.
