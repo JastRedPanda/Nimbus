@@ -21,6 +21,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/JastRedPanda/Nimbus/internal/config"
 )
@@ -52,6 +53,9 @@ type Forecast struct {
 	// Deciding this is the caller's job, not the panel's: the caller is the only
 	// one that knows whether a remembered position should be honoured at all.
 	At *Point
+
+	// Interval задаёт периодичность автообновления данных. 0 — не обновлять.
+	Interval time.Duration
 
 	// OnMove reports the panel's final position as it closes, so a caller that
 	// wants to remember it can. May be nil.

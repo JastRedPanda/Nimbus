@@ -89,6 +89,11 @@ var colAlign = [...]int{
 var (
 	forecastWindow  gtk.Window
 	forecastDismiss func()
+	forecastPage    uintptr
+	forecastReq     *gui.Forecast
+	forecastLang    i18n.Lang
+	forecastTheme   string
+	forecastStop    chan struct{}
 )
 
 // closeOpenPanel makes the tray icon a toggle: if the panel is up, the click
@@ -136,26 +141,77 @@ func showForecast(req gui.Forecast) {
 		if s.consumed {
 			return
 		}
-		data, err := weather.FetchDaily(req.Lat, req.Lon)
+
+		l := i18n.ParseLang(req.Lang)
+
+		// Показываем кеш мгновенно, если есть.
+		_, cachedDaily := weather.Cached(req.Lat, req.Lon)
+		if cachedDaily != nil && forecastWindow == 0 {
+			gtk.Invoke(func() {
+				if forecastWindow == 0 {
+					buildForecast(cachedDaily, req, l, s.at)
+				}
+			})
+		}
+
+		// Фоновое обновление: загружаем свежие данные.
+		_, daily, err := weather.FetchAll(req.Lat, req.Lon)
 		schedErr := gtk.Invoke(func() {
-			l := i18n.ParseLang(req.Lang)
 			if err != nil {
 				log.Printf("forecast: fetch failed: %v", err)
-			} else if len(data) == 0 {
+			} else if len(daily) == 0 {
 				log.Print("forecast: fetch returned no days")
 			}
-			if err != nil || len(data) == 0 {
-				ensureAppIcon()
-				gtk.ShowError(appName, l.ForecastFailed(), "", l.CloseLabel())
+			if err != nil || len(daily) == 0 {
+				// Если окно уже показано из кеша, просто логируем.
+				if forecastWindow == 0 {
+					ensureAppIcon()
+					gtk.ShowError(appName, l.ForecastFailed(), "", l.CloseLabel())
+				}
 				return
 			}
-			buildForecast(data, req, l, s.at)
+			if forecastWindow == 0 {
+				buildForecast(daily, req, l, s.at)
+			} else {
+				updateForecast(daily)
+			}
 		})
 		if schedErr != nil {
-			// Nothing will ever draw this. Say so rather than leaving the user
-			// clicking a menu item that silently does nothing.
 			log.Printf("forecast: cannot reach the GTK loop: %v", schedErr)
+			return
 		}
+		if err != nil || len(daily) == 0 {
+			return
+		}
+
+		// Автообновление по таймеру.
+		if req.Interval <= 0 {
+			return
+		}
+		stop := make(chan struct{})
+		forecastStop = stop
+		go func() {
+			ticker := time.NewTicker(req.Interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					_, newDaily, fetchErr := weather.FetchAll(req.Lat, req.Lon)
+					gtk.Invoke(func() {
+						if forecastWindow == 0 {
+							return
+						}
+						if fetchErr != nil {
+							log.Printf("forecast: auto-refresh failed: %v", fetchErr)
+							return
+						}
+						updateForecast(newDaily)
+					})
+				case <-stop:
+					return
+				}
+			}
+		}()
 	}()
 }
 
@@ -175,10 +231,33 @@ func pointerAnchor() gtk.Rect {
 	return gtk.Rect{X: x, Y: y, W: area.W, H: area.H}
 }
 
+// updateForecast заменяет содержимое открытого окна новыми данными.
+// Должна вызываться на GTK-треде.
+func updateForecast(data []weather.DailyForecast) {
+	if forecastWindow == 0 || forecastPage == 0 || forecastReq == nil {
+		return
+	}
+	req := *forecastReq
+	l := forecastLang
+
+	gtk.ClearContainer(forecastPage)
+	scale := forecastWindow.ScaleFactor()
+	fg := forecastWindow.Foreground()
+	grid := forecastTable(data, req.Units, req.WindUnit, l, scale, fg)
+	gtk.PackStart(forecastPage, grid, false, false, 0)
+	gtk.ShowAll(grid)
+}
+
 func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, at gtk.Rect) {
 	if forecastWindow != 0 {
 		forecastWindow.Present()
 		return
+	}
+
+	// Останавливаем предыдущий тикер, если есть.
+	if forecastStop != nil {
+		close(forecastStop)
+		forecastStop = nil
 	}
 
 	ensureAppIcon()
@@ -209,6 +288,12 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		closed = true
 		forecastWindow = 0
 		forecastDismiss = nil
+		forecastPage = 0
+		forecastReq = nil
+		if forecastStop != nil {
+			close(forecastStop)
+			forecastStop = nil
+		}
 	})
 	gtk.SetName(uintptr(win), forecastWindowID)
 
@@ -365,6 +450,10 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	page := gtk.NewVBox(0)
 	gtk.AddClass(page, "page")
 	win.Add(page)
+	forecastPage = page
+	forecastReq = &req
+	forecastLang = l
+	forecastTheme = req.Theme
 
 	gtk.PackStart(page, forecastTable(data, req.Units, req.WindUnit, l, scale, fg), false, false, 0)
 
