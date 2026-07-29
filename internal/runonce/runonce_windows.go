@@ -17,12 +17,13 @@ var (
 )
 
 func Lock() bool {
-	ret, _, err := procCreateMutexW.Call(
-		0,  // lpMutexAttributes
-		1,  // bInitialOwner — true
+	r, _, err := syscall.SyscallN(
+		procCreateMutexW.Addr(),
+		0, // lpMutexAttributes
+		1, // bInitialOwner — true
 		uintptr(unsafe.Pointer(mutexName)),
 	)
-	mu = ret
+	mu = r
 	if mu == 0 {
 		return true
 	}
