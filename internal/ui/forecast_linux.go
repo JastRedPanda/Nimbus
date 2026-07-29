@@ -90,10 +90,9 @@ var (
 	forecastWindow  gtk.Window
 	forecastDismiss func()
 	forecastPage    uintptr
-	forecastReq     *gui.Forecast
-	forecastLang    i18n.Lang
-	forecastTheme   string
-	forecastStop    chan struct{}
+	forecastReq  *gui.Forecast
+	forecastLang i18n.Lang
+	forecastStop chan struct{}
 )
 
 // closeOpenPanel makes the tray icon a toggle: if the panel is up, the click
@@ -453,7 +452,6 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	forecastPage = page
 	forecastReq = &req
 	forecastLang = l
-	forecastTheme = req.Theme
 
 	gtk.PackStart(page, forecastTable(data, req.Units, req.WindUnit, l, scale, fg), false, false, 0)
 

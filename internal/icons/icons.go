@@ -154,11 +154,11 @@ func encodeICO(imgs ...*image.RGBA) []byte {
 		b := img.Bounds()
 		w, h := b.Dx(), b.Dy()
 		iw := uint8(w)
-		if iw > 255 {
+		if w > 255 {
 			iw = 0
 		}
 		ih := uint8(h)
-		if ih > 255 {
+		if h > 255 {
 			ih = 0
 		}
 		binary.Write(buf, binary.LittleEndian, iw)

@@ -172,7 +172,7 @@ func (w *WeatherData) Emoji() string {
 	switch {
 	case w.WeatherCode == 0:
 		return "\u2600\ufe0f"
-	case w.WeatherCode <= 2:
+	case w.WeatherCode >= 1 && w.WeatherCode <= 2:
 		return "\u26c5"
 	case w.WeatherCode == 3:
 		return "\u2601\ufe0f"
@@ -188,7 +188,7 @@ func (w *WeatherData) Emoji() string {
 		return "\U0001f327\ufe0f"
 	case w.WeatherCode >= 85 && w.WeatherCode <= 86:
 		return "\U0001f328\ufe0f"
-	case w.WeatherCode >= 95:
+	case w.WeatherCode >= 95 && w.WeatherCode <= 99:
 		return "\u26c8\ufe0f"
 	default:
 		return "\U0001f321\ufe0f"

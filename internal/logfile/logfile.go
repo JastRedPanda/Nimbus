@@ -94,6 +94,15 @@ func (r *rotator) open() error {
 	return nil
 }
 
+func (r *rotator) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.f != nil {
+		r.f.Close()
+		r.f = nil
+	}
+}
+
 func (r *rotator) Write(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,15 +127,17 @@ func (r *rotator) Write(p []byte) (int, error) {
 // restart empties the file in place rather than renaming it aside. There is one
 // log and no rotation scheme to name generations in: what a fault report needs is
 // the newest lines, and a second file that also has to be found and sent is worse
-// than none. Truncating rather than reopening keeps the same inode, so anything
-// tailing the file follows it across the restart.
+// than none. Reopening rather than truncating in place: O_APPEND ignores seeks
+// on Windows, so Seek+Truncate leaves the handle past the end of file and every
+// subsequent write appends to a position that no longer exists.
 func (r *rotator) restart() error {
-	if _, err := r.f.Seek(0, 0); err != nil {
+	r.f.Close()
+	os.Remove(r.path)
+	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
 		return err
 	}
-	if err := r.f.Truncate(0); err != nil {
-		return err
-	}
+	r.f = f
 	r.size = 0
 	// Written straight to the file: going through log would deadlock on mu.
 	n, _ := r.f.WriteString("--- log restarted: the previous contents reached the size limit ---\n")

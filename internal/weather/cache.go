@@ -29,9 +29,13 @@ func Cached(lat, lon float64) (current *WeatherData, daily []DailyForecast) {
 func Store(current *WeatherData, daily []DailyForecast, lat, lon float64) {
 	mu.Lock()
 	defer mu.Unlock()
+	now := time.Now()
+	if current != nil {
+		current.FetchedAt = now
+	}
 	entry.current = current
 	entry.daily = daily
-	entry.fetchedAt = time.Now()
+	entry.fetchedAt = now
 	entry.lat = lat
 	entry.lon = lon
 }

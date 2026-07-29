@@ -46,6 +46,8 @@ func TestWriteRestartsWithinTheSession(t *testing.T) {
 		}
 	}
 
+	r.Close()
+
 	// And it really did restart rather than stop writing: the newest line has to
 	// be there, and the oldest must not be.
 	data, err := os.ReadFile(path)
@@ -73,6 +75,7 @@ func TestWriteKeepsTheNewestLine(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
+	r.Close()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -101,6 +104,7 @@ func TestOpenDiscardsAnOversizedFile(t *testing.T) {
 	if r.size != 0 {
 		t.Errorf("size = %d after opening an oversized log, want 0", r.size)
 	}
+	r.Close()
 	if got := size(t, path); got != 0 {
 		t.Errorf("file is %d bytes after opening an oversized log, want 0", got)
 	}
@@ -126,6 +130,7 @@ func TestOpenAppendsToASmallFile(t *testing.T) {
 	if _, err := r.Write([]byte("new\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	r.Close()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read: %v", err)

@@ -110,13 +110,13 @@ func ShowSettings(cfg *config.Config) *config.Config {
 	})
 	mux.HandleFunc("/save", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
-			http.Error(w, "POST only", 405)
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
 		}
 		nc := parseForm(r, cfg)
 		nc.Save()
 		res <- nc
-		http.Redirect(w, r, "/done", 302)
+		http.Redirect(w, r, "/done", http.StatusFound)
 	})
 	mux.HandleFunc("/done", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("<html><body><p>Saved. You may close this tab.</p></body></html>"))
@@ -124,11 +124,8 @@ func ShowSettings(cfg *config.Config) *config.Config {
 
 	go http.Serve(l, mux)
 
-	select {
-	case nc := <-res:
-		l.Close()
-		return nc
-	}
+	defer l.Close()
+	return <-res
 }
 
 func ShowAbout(theme string) {
