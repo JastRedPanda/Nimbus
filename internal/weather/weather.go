@@ -1,4 +1,4 @@
-﻿package weather
+package weather
 
 import (
 	"encoding/json"
@@ -10,14 +10,14 @@ import (
 )
 
 type WeatherData struct {
-	Temperature      float64   `json:"temperature"`
-	ApparentTemp     float64   `json:"apparent_temperature"`
-	Humidity         float64   `json:"humidity"`
-	WindSpeed        float64   `json:"wind_speed"`
-	SurfacePressure  float64   `json:"surface_pressure"`
-	WeatherCode      int       `json:"weather_code"`
-	Location         string    `json:"-"`
-	FetchedAt        time.Time `json:"-"`
+	Temperature     float64   `json:"temperature"`
+	ApparentTemp    float64   `json:"apparent_temperature"`
+	Humidity        float64   `json:"humidity"`
+	WindSpeed       float64   `json:"wind_speed"`
+	SurfacePressure float64   `json:"surface_pressure"`
+	WeatherCode     int       `json:"weather_code"`
+	Location        string    `json:"-"`
+	FetchedAt       time.Time `json:"-"`
 }
 
 type openMeteoResponse struct {
@@ -111,8 +111,20 @@ func FetchDaily(lat, lon float64) ([]DailyForecast, error) {
 	if err := json.Unmarshal(body, &dr); err != nil {
 		return nil, fmt.Errorf("parse daily JSON failed: %w", err)
 	}
+	// Bounded by the SHORTEST array, not by time's length. These six arrive as
+	// parallel arrays and nothing in the protocol guarantees they are the same
+	// length: a truncated or misbehaving response with one short array indexed out
+	// of range, and this runs on a bare goroutine, so the panic took the whole
+	// tray down rather than failing one forecast.
+	n := len(dr.Daily.Time)
+	for _, l := range []int{len(dr.Daily.TempMax), len(dr.Daily.TempMin),
+		len(dr.Daily.Weather), len(dr.Daily.PrecipSum), len(dr.Daily.WindMax)} {
+		if l < n {
+			n = l
+		}
+	}
 	var out []DailyForecast
-	for i := range dr.Daily.Time {
+	for i := 0; i < n; i++ {
 		out = append(out, DailyForecast{
 			Date:        dr.Daily.Time[i],
 			TempMax:     dr.Daily.TempMax[i],

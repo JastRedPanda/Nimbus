@@ -148,7 +148,10 @@ func ShowAbout(theme string) {
 	mux.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
 		aboutTmpl.Execute(w, map[string]string{"iconTheme": theme})
 	})
-	http.Serve(l, mux)
+	// go, like every other page here. Without it this never returns, and the tray
+	// calls About on its single menu-dispatch loop - so one click wedged Forecast,
+	// Settings and Quit for the rest of the process.
+	go http.Serve(l, mux)
 }
 
 func ShowForecast(lat, lon float64, units, lang, theme, windUnit string) {
@@ -179,7 +182,10 @@ func renderSettings(w io.Writer, cfg *config.Config) {
 		{"en", "English"},
 		{"uk", "Українська"},
 	}
-	intervals := []struct{ Minutes int; Label string }{
+	intervals := []struct {
+		Minutes int
+		Label   string
+	}{
 		{5, "5 min"},
 		{30, "30 min"},
 		{60, "1 hour"},
@@ -188,24 +194,24 @@ func renderSettings(w io.Writer, cfg *config.Config) {
 	}
 
 	data := map[string]interface{}{
-		"cfg":         cfg,
-		"t":           t,
-		"units":       units,
-		"presUnits":   presUnits,
-		"windUnits":   windUnits,
-		"themes":      themes,
-		"langs":       langs,
-		"intervals":   intervals,
-		"fontScale":   cfg.FontScale,
-		"updateInt":   cfg.UpdateInterval,
-		"tempUnit":    cfg.Units,
-		"presUnit":    cfg.PressureUnit,
-		"windUnit":    cfg.WindUnit,
-		"iconTheme":   cfg.IconTheme,
-		"language":    cfg.Language,
-		"cityName":    cfg.CityName,
-		"latitude":    fmt.Sprintf("%.4f", cfg.Latitude),
-		"longitude":   fmt.Sprintf("%.4f", cfg.Longitude),
+		"cfg":       cfg,
+		"t":         t,
+		"units":     units,
+		"presUnits": presUnits,
+		"windUnits": windUnits,
+		"themes":    themes,
+		"langs":     langs,
+		"intervals": intervals,
+		"fontScale": cfg.FontScale,
+		"updateInt": cfg.UpdateInterval,
+		"tempUnit":  cfg.Units,
+		"presUnit":  cfg.PressureUnit,
+		"windUnit":  cfg.WindUnit,
+		"iconTheme": cfg.IconTheme,
+		"language":  cfg.Language,
+		"cityName":  cfg.CityName,
+		"latitude":  fmt.Sprintf("%.4f", cfg.Latitude),
+		"longitude": fmt.Sprintf("%.4f", cfg.Longitude),
 	}
 	settingsTmpl.Execute(w, data)
 }
@@ -230,12 +236,12 @@ func renderForecast(w io.Writer, lat, lon float64, units, lang, theme, windUnit 
 	windLabel := l.WindUnitCfg(windUnit)
 
 	type dayRow struct {
-		Date       string
-		Icon       string
-		TempMax    string
-		TempMin    string
-		Precip     string
-		Wind       string
+		Date    string
+		Icon    string
+		TempMax string
+		TempMin string
+		Precip  string
+		Wind    string
 	}
 	var rows []dayRow
 	for _, d := range data {
@@ -310,4 +316,33 @@ func parseForm(r *http.Request, old *config.Config) *config.Config {
 		nc.UpdateInterval = iv
 	}
 	return &nc
+}
+
+// errorTmpl is built here rather than kept in a file because it is a few lines
+// and has no styling to share with the other pages.
+var errorTmpl = template.Must(template.New("error").Parse(
+	`<!DOCTYPE html><html><head><meta charset="utf-8">` +
+		`<link rel="icon" href="/icon" type="image/png"><title>{{.Title}}</title>` +
+		`<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;` +
+		`background:#1c1c1e;color:#eee;display:flex;align-items:center;justify-content:center;` +
+		`min-height:100vh;margin:0}p{font-size:16px}</style></head>` +
+		`<body><p>{{.Message}}</p></body></html>`))
+
+// ShowError opens a page carrying a failure message. It returns as soon as the
+// page is served rather than waiting for the user to close the tab, because a
+// browser tab has no dismissal the app can observe.
+func ShowError(title, message string) {
+	l := listen()
+	if l == nil {
+		return
+	}
+	addr := l.Addr().String()
+	openURL("http://" + addr + "/error")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/icon", faviconHandler)
+	mux.HandleFunc("/error", func(w http.ResponseWriter, r *http.Request) {
+		errorTmpl.Execute(w, map[string]string{"Title": title, "Message": message})
+	})
+	go http.Serve(l, mux)
 }

@@ -1,3 +1,19 @@
 *.exe
 *.exe~
 bin/
+# Anchored, because an unanchored "build/" also matches internal/build - the
+# package, not the output directory. It did: internal/build/build.go is only in
+# the repository because someone force-added it, and its test file was invisible
+# to git until this was fixed.
+/build/
+
+# Packaging output
+dist/debian/nimbus-gtk/
+dist/debian/nimbus-qt/
+dist/*.deb
+dist/*.rpm
+dist/rpm/BUILD/
+dist/rpm/RPMS/
+dist/rpm/SRPMS/
+dist/rpm/nimbus-*-build.spec
+internal/qt/libnimbusqt.so

@@ -1,0 +1,2 @@
+# Built by `go build ./...` inside this directory; the Makefile uses `go run`.
+/winres

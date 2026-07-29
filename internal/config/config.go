@@ -1,10 +1,11 @@
-﻿package config
+package config
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,16 @@ type Config struct {
 	IconTheme      string  `json:"icon_theme"`
 	Language       string  `json:"language"`
 	FontScale      int     `json:"font_scale"`
+
+	// ForecastX and ForecastY remember where the panel was last dragged to.
+	// They are pointers because there is no free sentinel value: (0,0) is a
+	// legitimate top-left corner and negative coordinates are legitimate on a
+	// multi-monitor layout. nil means the panel has never been MOVED - a drag the
+	// user cancels does not count, and neither does a Wayland session, where a
+	// client cannot know its own position - and the backend then anchors it at the
+	// corner nearest the pointer instead.
+	ForecastX *int `json:"forecast_x,omitempty"`
+	ForecastY *int `json:"forecast_y,omitempty"`
 }
 
 func Default() *Config {
@@ -68,9 +79,24 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return Default(), err
 	}
+	// An old config file still carries an "appearance" key; encoding/json ignores
+	// unknown keys on Unmarshal, so it is simply dropped on the next Save.
 	return cfg, nil
 }
 
+// Save writes the config atomically: a temp file in the target's own directory,
+// then a rename over the target.
+//
+// A plain os.WriteFile truncates first and can leave a half-written file behind,
+// and there are now two unsynchronised writers - a Save click in the settings
+// window, and the forecast panel reporting its position from a detached
+// goroutine as it closes. main.go calls log.Fatalf when Load fails, so a torn
+// file is not cosmetic: the app refuses to start until someone deletes the
+// config by hand. The rename is what makes a concurrent reader see either the
+// old file or the new one and never a truncated one.
+//
+// The temp file goes in the same directory on purpose - os.Rename cannot cross
+// filesystems, and os.TempDir often is one.
 func (c *Config) Save() error {
 	dir, err := configDir()
 	if err != nil {
@@ -87,7 +113,62 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+
+	// Preserve whatever mode the file already has; 0600 only decides the mode of a
+	// config being created for the first time. CreateTemp makes the temp file 0600,
+	// so the mode has to be set explicitly either way.
+	//
+	// 0600 rather than 0644 because of what is in here: the user's home coordinates
+	// to four decimal places and their city. The log file written into this same
+	// directory has always been 0600, so the two now agree about the same data, and
+	// on any host where ~/.config is traversable - which several distributions leave
+	// it at - the old mode let every local account read where the user lives.
+	mode := os.FileMode(0600)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+
+	tmp, err := os.CreateTemp(dir, "config.json.tmp*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Every failure past this point has to unlink the temp file, or a directory
+	// full of config.json.tmp* is what a user with a full disk ends up with.
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		cleanup()
+		return err
+	}
+	// Sync before the rename, not just Close. The rename gives a concurrent
+	// reader old-or-new, but it says nothing about what survives a power loss:
+	// on ext4 and xfs the rename can reach the disk before the data does, and
+	// what is left after the reboot is the new name over a zero-length or
+	// partially written file - the exact torn config that makes main.go
+	// log.Fatalf and the app refuse to start until someone deletes the file by
+	// hand.
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	// Close before renaming: on Windows a rename over an open file fails, and
+	// the close is also where a deferred write error surfaces.
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func ConfigPath() (string, error) {
@@ -98,13 +179,45 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
+// Delete removes the configuration file and advances the reset counter - see
+// Resets, which is the half of this that callers must not skip.
 func Delete() error {
 	path, err := configPath()
 	if err != nil {
 		return err
 	}
-	return os.Remove(path)
+	err = os.Remove(path)
+	if err == nil || os.IsNotExist(err) {
+		// Counted even when the file was already gone: what the counter records is
+		// "the configuration was discarded", and the user pressed the button either
+		// way.
+		resets.Add(1)
+	}
+	return err
 }
+
+// resets counts how many times the configuration has been discarded rather than
+// edited. Atomic because Delete runs on whichever thread owns the settings
+// window while Resets is read from the tray's goroutines.
+var resets atomic.Uint64
+
+// Resets reports how many times the configuration has been discarded. It is a
+// counter, not a flag: callers capture it, do something slow, and compare.
+//
+// It exists because "was the configuration reset?" cannot be answered by looking
+// at the disk, and two bugs came from trying. The "Delete configuration" button
+// removes the file and hands back Default(), which deliberately carries no
+// remembered panel position; the tray then carries the live position of a panel
+// that is still on screen forward onto the returned config and saves it, which
+// recreated the file that had just been deleted with the coordinates that had
+// just been discarded. Asking whether the file exists closed the ordinary case
+// and left two holes: the answer is only correct in the window between the delete
+// and the next write, so a panel closing in that window put the file back; and a
+// Save that FAILED also leaves no file, which read as a reset and silently threw
+// away a position the user had chosen. A counter has neither hole - it moves when
+// and only when the configuration is actually discarded, and it moves inside
+// Delete rather than at some later point that a racing writer can slip past.
+func Resets() uint64 { return resets.Load() }
 
 func (c *Config) Interval() time.Duration {
 	d := time.Duration(c.UpdateInterval) * time.Minute
