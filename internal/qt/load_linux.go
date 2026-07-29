@@ -58,14 +58,16 @@ var (
 	loadOnce sync.Once
 	loadErr  error
 
-	qtInit   func() int32
-	qtRun    func()
-	qtQuit   func()
-	qtInvoke func(uintptr, uint64)
-	qtAbout  func(string, string, string)
-	qtError  func(string, string)
-	qtFont   func(unsafe.Pointer, int32)
-	qtIcon   func(unsafe.Pointer, int32)
+	qtInit     func() int32
+	qtRun      func()
+	qtQuit     func()
+	qtInvoke   func(uintptr, uint64)
+	qtAbout    func(string, string, string)
+	qtError    func(string, string)
+	qtFont     func(unsafe.Pointer, int32)
+	qtIcon     func(unsafe.Pointer, int32)
+	qtTheme    func(int32)
+	qtCanTheme func() int32
 
 	qtPanelBegin  func(string)
 	qtPanelHeader func(string, int32)
@@ -148,6 +150,8 @@ func load() error {
 		purego.RegisterLibFunc(&qtError, lib, "nimbus_qt_error")
 		purego.RegisterLibFunc(&qtFont, lib, "nimbus_qt_font")
 		purego.RegisterLibFunc(&qtIcon, lib, "nimbus_qt_icon")
+		purego.RegisterLibFunc(&qtTheme, lib, "nimbus_qt_theme")
+		purego.RegisterLibFunc(&qtCanTheme, lib, "nimbus_qt_can_theme")
 
 		purego.RegisterLibFunc(&qtPanelBegin, lib, "nimbus_qt_forecast_begin")
 		purego.RegisterLibFunc(&qtPanelHeader, lib, "nimbus_qt_forecast_header")

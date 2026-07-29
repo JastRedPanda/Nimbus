@@ -182,6 +182,13 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	}
 
 	ensureAppIcon()
+	// The theme option, applied to the process's own GtkSettings before the window
+	// is built - "auto" leaves the property alone, so the desktop's preference
+	// wins and the theme paints this window as it paints every other. The panel
+	// states no colours of its own, so asking for the theme's dark variant is the
+	// whole of what "dark" can mean here, and it is the same call About and the
+	// settings window make.
+	gtk.PreferDark(req.Theme)
 	gtk.LoadCSS(forecastCSS)
 
 	// closed says this panel is gone. It is declared before the window because the

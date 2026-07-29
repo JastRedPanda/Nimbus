@@ -73,6 +73,24 @@ func (backend) Forecast(req gui.Forecast) {
 
 // buildPanel hands the shim a finished table and the callback the window answers
 // through. Qt thread only.
+// applyTheme hands the theme option to Qt before a window is built. A build
+// against Qt older than 6.8 cannot honour it and says so through canTheme; the
+// settings window then offers no switch at all, so the only value that reaches
+// here is the one already stored.
+func applyTheme(theme string) {
+	switch theme {
+	case "dark":
+		qtTheme(1)
+	case "light":
+		qtTheme(0)
+	default:
+		qtTheme(-1)
+	}
+}
+
+// canTheme reports whether this shim can act on the theme option.
+func canTheme() bool { return qtCanTheme() != 0 }
+
 func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 	if panelUp {
 		// Two clicks inside one fetch: the first had not drawn anything yet when
@@ -85,6 +103,7 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 		return
 	}
 	ensureFont()
+	applyTheme(req.Theme)
 
 	var id uint64
 	id = register(&window{

@@ -103,6 +103,23 @@ void nimbus_qt_font(const void *data, int len);
 // screen, which is why it is called once at startup and never again.
 void nimbus_qt_icon(const void *data, int len);
 
+// nimbus_qt_theme applies the application's theme option: 1 dark, 0 light, -1
+// auto. Auto is not a colour - it removes any request this program has made and
+// lets the desktop paint, which is what a native application does by default.
+//
+// nimbus_qt_can_theme reports whether this build can honour that at all. It
+// cannot below Qt 6.8: QStyleHints::setColorScheme, its getter, and even the
+// Qt::ColorScheme enum arrived in that version, and none of them exist in the
+// 6.2 the released shim is compiled against - verified in an ubuntu:22.04
+// container, which is the floor the release workflow builds on. There is no way
+// around it from the outside: the call has to compile, and it cannot.
+//
+// So the caller ASKS, and hides the option rather than offering a switch that
+// does nothing. A shim built locally against a newer Qt answers 1 and the
+// switch appears.
+void nimbus_qt_theme(int dark);
+int nimbus_qt_can_theme(void);
+
 // ---- the forecast panel ----
 //
 // Built in four steps: begin, then the five headers, then a call per day, then

@@ -191,8 +191,17 @@ func buildForm(cfg *config.Config, onFontScale func(int), result chan<- *config.
 		config.Index(cfg.PressureUnit, pressureValues...))
 	choice(keyWind, l.WindGroup(), []string{l.WindMS(), l.WindKMH()},
 		config.Index(cfg.WindUnit, windValues...))
-	choice(keyTheme, l.ThemeGroup(), []string{l.ThemeAuto(), l.ThemeDark(), l.ThemeLight()},
-		config.Index(cfg.IconTheme, themeValues...))
+	// Offered only where it can be acted on. Below Qt 6.8 the toolkit has no
+	// per-application colour scheme to set - see nimbus_qt_can_theme - and the
+	// windows follow the desktop whatever this says, so a switch here would be a
+	// control that changes nothing. Hiding it is the honest answer; applyTheme is
+	// then called with the stored value, which is what it already was.
+	if canTheme() {
+		choice(keyTheme, l.ThemeGroup(), []string{l.ThemeAuto(), l.ThemeDark(), l.ThemeLight()},
+			config.Index(cfg.IconTheme, themeValues...))
+	} else {
+		log.Print("qt: this Qt cannot switch colour scheme per application (needs 6.8); the theme option is not offered")
+	}
 	choice(keyLang, l.LanguageGroup(), []string{"English", "Українська"},
 		config.Index(cfg.Language, langValues...))
 
@@ -254,6 +263,9 @@ func adopt(cfg *config.Config, values map[int64]string, action int) *config.Conf
 		nc.Units = choose(values[keyUnits], cfg.Units, unitValues)
 		nc.PressureUnit = choose(values[keyPressure], cfg.PressureUnit, pressureValues)
 		nc.WindUnit = choose(values[keyWind], cfg.WindUnit, windValues)
+		// choose keeps the stored value when the key is absent, which is exactly
+		// what a hidden switch reports - so a build that cannot theme never
+		// overwrites a preference the user set on a build that could.
 		nc.IconTheme = choose(values[keyTheme], cfg.IconTheme, themeValues)
 		nc.Language = choose(values[keyLang], cfg.Language, langValues)
 		if v, err := strconv.Atoi(values[keyScale]); err == nil {

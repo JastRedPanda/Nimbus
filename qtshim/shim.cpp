@@ -34,6 +34,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QGuiApplication>
+#include <QStyleHints>
 #include <QIcon>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -657,6 +658,43 @@ void nimbus_qt_error(const char *title, const char *message) {
     m->setModal(false);
     errorBox = m;
     m->show();
+}
+
+void nimbus_qt_theme(int dark) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    if (!app) {
+        return;
+    }
+    QStyleHints *hints = QGuiApplication::styleHints();
+    if (!hints) {
+        return;
+    }
+    // unsetColorScheme rather than a third colour: "auto" means this program has
+    // no opinion, which is a different statement from asking for whichever scheme
+    // the desktop happens to be using now. The difference shows the moment the
+    // user changes the desktop theme with the panel open.
+    switch (dark) {
+    case 1:
+        hints->setColorScheme(Qt::ColorScheme::Dark);
+        break;
+    case 0:
+        hints->setColorScheme(Qt::ColorScheme::Light);
+        break;
+    default:
+        hints->unsetColorScheme();
+        break;
+    }
+#else
+    (void)dark;
+#endif
+}
+
+int nimbus_qt_can_theme(void) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    return 1;
+#else
+    return 0;
+#endif
 }
 
 void nimbus_qt_font(const void *data, int len) {

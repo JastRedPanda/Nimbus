@@ -174,12 +174,22 @@ Where it was put is remembered: the position is stored in `forecast_x` /
 `forecast_y` and written only after an actual drag, so a panel that has never been
 moved keeps opening at the work-area corner nearest the pointer.
 
-The theme option below (Auto / Dark / Light) drives the tray icon and the rest of
-Nimbus's own windows; it has no say over the forecast panel, which always follows
-the desktop's own theme instead. On Windows that needs one exception: `GetSysColor`
-does not follow the Windows dark theme, so when Windows is set to dark apps the
-panel falls back to the same hardcoded dark palette the rest of Nimbus's windows
-use, rather than the light answer `GetSysColor` would otherwise give.
+The theme option (Auto / Dark / Light) governs every window Nimbus opens,
+including this one, on all three toolkits. **Auto** is not a third colour: it
+means Nimbus states no preference at all and the desktop paints its windows, the
+way any native application behaves. **Dark** and **Light** ask the system for the
+colours of that scheme - the desktop theme's dark variant on GTK, the
+application colour scheme on Qt, and on Windows the system colours for light and
+the dark surface Windows applications paint themselves for dark, since
+`GetSysColor` answers light even when Windows is set to dark apps.
+
+The option does NOT affect the tray icon, which is coloured by the temperature.
+
+One limitation, on Qt only: switching the colour scheme per application arrived
+in **Qt 6.8**, and released builds compile the Qt half against Qt 6.2 so that
+they run on Ubuntu 22.04, Debian 12 and RHEL 9. Where the toolkit cannot honour
+the option, the settings window does not offer it at all and the windows follow
+the desktop. A locally built `make qt` on Qt 6.8 or newer offers it.
 
 The browser fallback (used when the toolkit a build needs cannot be loaded) shows
 the forecast as an ordinary page in a tab, not a window Nimbus draws, so none of
@@ -205,12 +215,22 @@ keys it does not know, and both simply disappear the next time the file is saved
 жодного разу не переміщали, і далі зʼявляється біля найближчого до курсора кута
 робочої області.
 
-Опція теми нижче (Авто / Темна / Світла) керує піктограмою в треї та рештою
-власних вікон Nimbus; на панель прогнозу вона не впливає - панель завжди йде за
-темою самої стільниці. У Windows тут є один виняток: `GetSysColor` не стежить за
-темною темою Windows, тому коли Windows налаштована малювати застосунки темними,
-панель переходить на ту саму жорстко задану темну палітру, якою малюються решта
-вікон Nimbus, замість світлої відповіді, яку інакше дав би `GetSysColor`.
+Опція теми (Авто / Темна / Світла) керує **всіма** вікнами Nimbus, включно з
+панеллю, на всіх трьох тулкітах. **Авто** - це не третій колір: Nimbus не
+висловлює жодних побажань і вікна малює стільниця, як і належить рідному
+застосунку. **Темна** і **Світла** просять у системи кольори відповідної схеми -
+темний варіант теми стільниці в GTK, кольорову схему застосунку в Qt, а в
+Windows системні кольори для світлої та ту темну поверхню, яку застосунки Windows
+малюють самі, бо `GetSysColor` відповідає світлим навіть коли Windows налаштована
+малювати застосунки темними.
+
+На піктограму в треї опція **не** впливає - її колір задає температура.
+
+Одне обмеження, лише для Qt: перемикання кольорової схеми на рівні застосунку
+зʼявилося в **Qt 6.8**, а релізні збірки компілюють Qt-частину проти Qt 6.2, щоб
+вони працювали на Ubuntu 22.04, Debian 12 і RHEL 9. Там, де тулкіт не може
+виконати опцію, вікно налаштувань її взагалі не показує, а вікна йдуть за
+стільницею. Зібрана локально `make qt` на Qt 6.8 або новішій - показує.
 
 Резервна веб-форма (використовується, коли потрібний тулкіт не вдалося завантажити)
 показує прогноз як звичайну сторінку у вкладці, а не вікно, яке малює Nimbus, тому
@@ -259,7 +279,7 @@ time; while they are absent the panel opens next to the pointer.
 | `units` | `celsius` / `fahrenheit` | Temperature unit / Одиниця температури |
 | `pressure_unit` | `hpa` / `mmhg` / `inhg` | Pressure unit / Одиниця тиску |
 | `wind_unit` | `ms` / `kmh` | Wind unit / Одиниця вітру |
-| `icon_theme` | `auto` / `dark` / `light` | Window theme; does not apply to the forecast panel, which always follows the desktop's own theme / Тема вікон; на панель прогнозу не впливає - вона завжди йде за темою стільниці |
+| `icon_theme` | `auto` / `dark` / `light` | Theme for every window, the panel included; `auto` lets the desktop paint. Not the tray icon / Тема всіх вікон, разом із панеллю; `auto` віддає малювання стільниці. Піктограми в треї не стосується |
 | `language` | `en` / `uk` | UI language / Мова інтерфейсу |
 | `font_scale` | int 1–100 | Tray font scale % / Масштаб шрифту в треї (%) |
 | `forecast_x`, `forecast_y` | int, optional | Remembered panel position; absent until it is dragged / Запамʼятована позиція панелі; відсутня, доки її не перетягнули |

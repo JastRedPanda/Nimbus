@@ -492,18 +492,21 @@ type panel struct {
 }
 
 func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *panel {
-	// The theme option deliberately does NOT choose this palette, and resolveDark
-	// is therefore not what answers here. The desktop paints this window's
-	// caption, so its client area has to agree with the desktop rather than with a
-	// preference: honouring icon_theme="light" would put a light table under a
-	// caption the DWM has drawn dark. The only question left is the one
-	// GetSysColor cannot answer - whether Windows is drawing applications dark -
-	// so that setting is read directly. The theme option still drives the tray
-	// icon; it simply has nothing to say about a window the desktop paints.
+	// The theme option chooses this palette, exactly as it does for the About and
+	// settings windows, and "auto" is what defers to Windows.
 	//
-	// High contrast wins over the dark-apps switch - see panelPaletteSystem for
-	// why the substitution that is right for dark mode is wrong there.
-	dark := systemDark() && !highContrastOn()
+	// It briefly did not, on the argument that the desktop paints this window's
+	// caption so the client area had to agree with the desktop rather than with a
+	// preference. The premise was wrong: the caption is not the desktop's to
+	// choose either. This program asks for the one it wants through
+	// DwmSetWindowAttribute, here and in both other windows, so honouring the
+	// option costs nothing and leaving one window out of it produced exactly what
+	// it sounds like - two light windows and a dark panel, on a desktop where the
+	// user had asked for light.
+	//
+	// High contrast wins over all of it - see panelPaletteSystem for why the
+	// substitution that is right for dark mode is wrong there.
+	dark := resolveDark(req.Theme) && !highContrastOn()
 
 	p := &panel{
 		title: l.ForecastTitle(),

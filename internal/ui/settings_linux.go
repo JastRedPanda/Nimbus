@@ -56,6 +56,7 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 
 	l := i18n.ParseLang(cfg.Language)
 	ensureAppIcon()
+	gtk.PreferDark(cfg.IconTheme)
 
 	win := gtk.NewWindow(l.SettingsTitle(), settingsWidth, -1, false)
 	win.SetBorder(14)
