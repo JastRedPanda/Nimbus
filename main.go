@@ -6,6 +6,7 @@ import (
 	"github.com/JastRedPanda/Nimbus/internal/build"
 	"github.com/JastRedPanda/Nimbus/internal/config"
 	"github.com/JastRedPanda/Nimbus/internal/logfile"
+	"github.com/JastRedPanda/Nimbus/internal/runonce"
 	"github.com/JastRedPanda/Nimbus/internal/tray"
 )
 
@@ -14,6 +15,12 @@ func main() {
 	// this every diagnostic in the program is written to a closed handle.
 	logfile.Open()
 	log.Printf("Nimbus %s starting", build.Version)
+
+	if !runonce.Lock() {
+		log.Print("Nimbus is already running; exiting")
+		return
+	}
+	defer runonce.Unlock()
 
 	cfg, err := config.Load()
 	if err != nil {
