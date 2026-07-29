@@ -25,7 +25,7 @@ package ui
 //	                ordinary one, the same the About box gets. WS_EX_TOOLWINDOW
 //	                was also what kept the panel off the taskbar and out of
 //	                Alt+Tab; an invisible owner window does that now instead -
-//	                see ensurePanelOwner.
+//	                see makeOwner.
 //	Colours:        GetSysColor, with one documented exception that is a Windows
 //	                wart rather than a choice - see panelPaletteSystem.
 //	Closing:        the caption's close button, or another click on the tray
@@ -527,8 +527,8 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 	return p
 }
 
-// The panel's owner: one invisible, zero-sized window that is never shown and
-// never painted.
+// makeOwner creates the panel's owner: an invisible, zero-sized window that is
+// never shown and never painted.
 //
 // It exists because of what dropping WS_EX_TOOLWINDOW cost. That flag was doing
 // two jobs at once - the thin palette caption, which was wrong and is gone, and
@@ -537,31 +537,36 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 // an OWNED top-level window out of both as well, and an owner is invisible, so
 // the caption stays exactly the one an ordinary application window gets.
 //
-// One owner for the life of the process, not one per panel: it holds no state, it
-// is never destroyed, and the process exiting takes it with it. A failure is
-// logged and survivable - the panel then behaves as it would have with no owner
-// at all, which is to say it picks up a taskbar button.
-var (
-	panelOwnerOnce sync.Once
-	panelOwner     win.HWND
-)
-
-func ensurePanelOwner(inst win.HINSTANCE) win.HWND {
-	panelOwnerOnce.Do(func() {
-		cn := utf16Of(panelClassName)
-		name := utf16Of("")
-		panelOwner = win.CreateWindowEx(
-			0,
-			&cn[0], &name[0],
-			win.WS_POPUP,
-			0, 0, 0, 0,
-			0, 0, inst, nil,
-		)
-		if panelOwner == 0 {
-			log.Print("forecast: the owner window could not be created; the panel will show a taskbar button")
-		}
-	})
-	return panelOwner
+// ONE OWNER PER PANEL, ON THE PANEL'S OWN THREAD, and that is the whole point of
+// this function rather than the sync.Once it replaces. A window belongs to the
+// thread that created it, and Windows destroys every window a thread owns when
+// that thread terminates. run locks its goroutine to an OS thread and never
+// unlocks it, so the thread dies with the panel - taking a process-wide owner
+// with it and leaving a stale HWND behind. CreateWindowEx then fails for every
+// panel after the first, which is exactly what it did: the first tray click
+// opened the forecast and no click afterwards opened anything.
+//
+// Created before pending is set, because it uses this same class: a WM_NCCREATE
+// arriving while pending is non-nil would hand the owner the panel that is about
+// to be built.
+//
+// A failure is logged and survivable - the panel is then created unowned, which
+// is to say with a taskbar button.
+func makeOwner(inst win.HINSTANCE) win.HWND {
+	cn := utf16Of(panelClassName)
+	name := utf16Of("")
+	owner := win.CreateWindowEx(
+		0,
+		&cn[0], &name[0],
+		win.WS_POPUP,
+		0, 0, 0, 0,
+		0, 0, inst, nil,
+	)
+	if owner == 0 {
+		log.Printf("forecast: the owner window could not be created (%v); the panel will show a taskbar button",
+			syscall.GetLastError())
+	}
+	return owner
 }
 
 // frame is how much larger the window is than the image it shows: the caption
@@ -835,7 +840,11 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 			CbSize:      uint32(unsafe.Sizeof(win.WNDCLASSEX{})),
 			LpfnWndProc: syscall.NewCallback(panelWndProc),
 			HInstance:   p.inst,
-			HCursor:     win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
+			// The application icon, resource id 1, the same one the About and
+			// settings windows ask for. Without it the caption and Alt+Tab draw
+			// the system's default application icon - which is what they did.
+			HIcon:   win.LoadIcon(p.inst, win.MAKEINTRESOURCE(1)),
+			HCursor: win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
 			// No class background brush and no CS_HREDRAW/CS_VREDRAW: nothing
 			// about this window is painted by the class. The WM_PAINT BitBlt
 			// covers every pixel of the client area, so a class brush would only
@@ -850,10 +859,14 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		return
 	}
 
-	// The owner comes first, and before pending is set below: it is created with
-	// this same class, so a WM_NCCREATE arriving while pending is non-nil would
-	// hand it the panel that is about to be built.
-	owner := ensurePanelOwner(p.inst)
+	owner := makeOwner(p.inst)
+	if owner != 0 {
+		// Deferred rather than destroyed at each exit, because there are four of
+		// them. It runs before the deferred releasePanel above it, and by then the
+		// panel window is already gone on every path - which matters, since
+		// destroying an owner destroys what it owns.
+		defer win.DestroyWindow(owner)
+	}
 
 	// Create INVISIBLE, at 1x1. Its size and position are not known until build
 	// and show have run, so WS_VISIBLE here would flash a 1x1 title bar in the
@@ -877,7 +890,11 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		panelMu.Lock()
 		pending = nil
 		panelMu.Unlock()
-		log.Printf("forecast: CreateWindowEx failed")
+		// With the reason, because the last time this line fired it said only
+		// that something had gone wrong, and the cause - an owner window
+		// belonging to a thread that had already exited - had to be reasoned out
+		// from the symptom instead of read here.
+		log.Printf("forecast: CreateWindowEx failed: %v", syscall.GetLastError())
 		return
 	}
 
