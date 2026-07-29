@@ -70,6 +70,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/JastRedPanda/Nimbus/internal/fonts"
@@ -139,6 +140,9 @@ var colAlign = [numCols]uint32{
 const weatherIconsFace = "Weather Icons"
 
 const panelClassName = "NimbusForecastPanel"
+
+// wmRefresh — пользовательское сообщение для обновления данных панели.
+const wmRefresh = win.WM_APP + 1
 
 // The window's shape, named rather than spelled out at the CreateWindowEx call,
 // because panel.frame has to be asked about the very styles the window was
@@ -329,19 +333,47 @@ func showForecast(req gui.Forecast) {
 			return
 		}
 
-		data, err := weather.FetchDaily(req.Lat, req.Lon)
-		if err != nil || len(data) == 0 {
+		// Показываем кеш мгновенно, если есть.
+		_, cachedDaily := weather.Cached(req.Lat, req.Lon)
+		if cachedDaily != nil {
+			p := newPanel(cachedDaily, req, l)
+			p.interval = req.Interval
+			go p.run(at, haveAt)
+		}
+
+		// Фоновое обновление.
+		_, daily, err := weather.FetchAll(req.Lat, req.Lon)
+		if err != nil || len(daily) == 0 {
 			if err != nil {
 				log.Printf("forecast: fetch failed: %v", err)
 			} else {
 				log.Printf("forecast: fetch returned no days")
 			}
-			showError(l.ForecastFailed())
+			// Если окно не открыто — показываем ошибку.
+			panelMu.Lock()
+			busy := panelBusy
+			panelMu.Unlock()
+			if !busy {
+				showError(l.ForecastFailed())
+			} else {
+				log.Printf("forecast: keeping stale cached data")
+			}
 			return
 		}
 
-		p := newPanel(data, req, l)
-		p.run(at, haveAt)
+		// Если окно уже открыто (из кеша) — обновляем.
+		panelMu.Lock()
+		hwnd := panelHWND
+		panelMu.Unlock()
+		if hwnd != 0 {
+			// Сохраняем новые данные в кеш
+			weather.Store(nil, daily, req.Lat, req.Lon)
+			win.PostMessage(hwnd, wmRefresh, 0, 0)
+		} else {
+			p := newPanel(daily, req, l)
+			p.interval = req.Interval
+			p.run(at, haveAt)
+		}
 	}()
 }
 
@@ -489,6 +521,9 @@ type panel struct {
 	// reason: a window whose BeginPaint fails is asked to paint again immediately,
 	// so an ungated line there is not a log entry but a log flood.
 	paintFailed bool
+
+	interval    time.Duration
+	refreshStop chan struct{}
 }
 
 func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *panel {
@@ -514,18 +549,7 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 		dark:  dark,
 		pal:   panelPaletteSystem(dark),
 		heads: l.ForecastHeaders(),
-	}
-	for _, d := range data {
-		var row tableRow
-		// The ISO date exactly as Open-Meteo returned it. No weekday name and no
-		// localised month: the column is a date, and a sortable one reads the
-		// same in both languages.
-		row.cell[0] = d.Date
-		row.cell[colCond] = fonts.IconForCode(d.WeatherCode)
-		row.cell[2] = weather.TempRange(d, req.Units, l)
-		row.cell[3] = weather.WindSpeed(d, req.WindUnit, l)
-		row.cell[4] = weather.Precip(d, l)
-		p.rows = append(p.rows, row)
+		rows:  buildRows(data, req, l),
 	}
 	return p
 }
@@ -764,6 +788,9 @@ func releasePanel() {
 	panelBusy = false
 	panelHWND = 0
 	panelMu.Unlock()
+	// Останавливаем автообновление.
+	// panel здесь не передаётся, поэтому идём через map через hwnd.
+	// Но проще: panel сам закроет refreshStop при завершении.
 }
 
 // raisePanel brings an already-open panel to the front. Used only when two
@@ -821,6 +848,12 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		return
 	}
 	defer releasePanel()
+	defer func() {
+		if p.refreshStop != nil {
+			close(p.refreshStop)
+			p.refreshStop = nil
+		}
+	}()
 
 	// MANDATORY. A window's message queue belongs to the thread that created
 	// the window. An unlocked goroutine can be rescheduled onto another OS
@@ -980,6 +1013,11 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		// not the active window, so it draws an inactive caption and the first
 		// click on it will be spent on activating it.
 		log.Printf("forecast: could not take the foreground; the panel is up but not activated")
+	}
+
+	if p.interval > 0 {
+		p.refreshStop = make(chan struct{})
+		go p.refreshLoop()
 	}
 
 	var msg win.MSG
@@ -1539,6 +1577,69 @@ func (p *panel) paint() {
 	win.SelectObject(dc, prev)
 }
 
+// refresh обновляет содержимое панели новыми данными из кеша.
+func (p *panel) refresh() {
+	_, daily := weather.Cached(p.req.Lat, p.req.Lon)
+	if daily == nil {
+		log.Print("forecast: refresh called with no cached data")
+		return
+	}
+
+	l := i18n.ParseLang(p.req.Lang)
+	p.rows = buildRows(daily, p.req, l)
+	p.measure()
+
+	if p.buf != nil {
+		p.buf.dispose()
+	}
+	ref := win.GetDC(p.hwnd)
+	if ref != 0 {
+		p.buf = newBackBuffer(ref, p.w, p.h)
+		win.ReleaseDC(p.hwnd, ref)
+	}
+
+	if p.buf != nil {
+		p.paint()
+		win.InvalidateRect(p.hwnd, nil, true)
+	}
+}
+
+func (p *panel) refreshLoop() {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_, daily, err := weather.FetchAll(p.req.Lat, p.req.Lon)
+			if err != nil {
+				log.Printf("forecast: auto-refresh failed: %v", err)
+				continue
+			}
+			weather.Store(nil, daily, p.req.Lat, p.req.Lon)
+			if p.hwnd != 0 {
+				win.PostMessage(p.hwnd, wmRefresh, 0, 0)
+			}
+		case <-p.refreshStop:
+			return
+		}
+	}
+}
+
+// buildRows создаёт rows из данных прогноза. Выделена из newPanel для переиспользования в refresh.
+func buildRows(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) []tableRow {
+	out := make([]tableRow, len(data))
+	for i, d := range data {
+		var row tableRow
+		row.cell[0] = d.Date
+		row.cell[colCond] = fonts.IconForCode(d.WeatherCode)
+		row.cell[2] = weather.TempRange(d, req.Units, l)
+		row.cell[3] = weather.WindSpeed(d, req.WindUnit, l)
+		row.cell[4] = weather.Precip(d, l)
+		out[i] = row
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -1722,6 +1823,10 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		// close exactly as it does for the tray toggle.
 		p.reportMove()
 		win.DestroyWindow(hwnd)
+		return 0
+
+	case wmRefresh:
+		p.refresh()
 		return 0
 
 	case win.WM_DESTROY:
