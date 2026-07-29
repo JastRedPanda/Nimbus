@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 )
 
@@ -136,36 +135,6 @@ func FetchDaily(lat, lon float64) ([]DailyForecast, error) {
 		})
 	}
 	return out, nil
-}
-
-func FetchAll(lat, lon float64) (*WeatherData, []DailyForecast, error) {
-	var (
-		wg       sync.WaitGroup
-		current  *WeatherData
-		daily    []DailyForecast
-		currErr  error
-		dailyErr error
-	)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		current, currErr = Fetch(lat, lon)
-	}()
-	go func() {
-		defer wg.Done()
-		daily, dailyErr = FetchDaily(lat, lon)
-	}()
-	wg.Wait()
-
-	if currErr != nil {
-		return nil, nil, fmt.Errorf("current weather: %w", currErr)
-	}
-	if dailyErr != nil {
-		return nil, nil, fmt.Errorf("daily forecast: %w", dailyErr)
-	}
-
-	Store(current, daily, lat, lon)
-	return current, daily, nil
 }
 
 func (w *WeatherData) Emoji() string {

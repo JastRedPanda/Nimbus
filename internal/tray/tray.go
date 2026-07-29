@@ -149,16 +149,15 @@ func (a *app) showForecast() {
 	// arrive after the configuration it was opened under has been thrown away.
 	// See saveForecastPos.
 	gen := config.Resets()
-		req := gui.Forecast{
-			Lat:      a.cfg.Latitude,
-			Lon:      a.cfg.Longitude,
-			Units:    a.cfg.Units,
-			Lang:     a.cfg.Language,
-			Theme:    a.cfg.IconTheme,
-			WindUnit: a.cfg.WindUnit,
-			Interval: a.cfg.Interval(),
-			OnMove:   func(x, y int) { a.saveForecastPos(gen, x, y) },
-		}
+	req := gui.Forecast{
+		Lat:      a.cfg.Latitude,
+		Lon:      a.cfg.Longitude,
+		Units:    a.cfg.Units,
+		Lang:     a.cfg.Language,
+		Theme:    a.cfg.IconTheme,
+		WindUnit: a.cfg.WindUnit,
+		OnMove:   func(x, y int) { a.saveForecastPos(gen, x, y) },
+	}
 	// The pointer anchor is what happens when there is nothing remembered yet; a
 	// remembered position is handed back whenever there is one.
 	if a.cfg.ForecastX != nil && a.cfg.ForecastY != nil {
