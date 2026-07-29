@@ -60,12 +60,15 @@ package ui
 //	                the window manager's own close button, square corners,
 //	                opaque. WS_SYSMENU is what puts the close button in the
 //	                caption; WS_CAPTION alone draws a bar with nothing in it.
-//	Extended style: WS_EX_TOOLWINDOW | WS_EX_TOPMOST, and deliberately NOT
-//	                WS_EX_LAYERED - see below. WS_EX_TOOLWINDOW does the same
-//	                job as in Modern, keeping the panel off the taskbar and out
-//	                of Alt+Tab, and additionally gives the thin palette-window
-//	                caption rather than a full-height one, which is the right
-//	                weight for a panel this small.
+//	Extended style: WS_EX_TOPMOST, and deliberately NOT WS_EX_LAYERED - see
+//	                below - nor WS_EX_TOOLWINDOW, which was here and was wrong.
+//	                That flag draws the thin palette-window caption with a small
+//	                close button, so the one control this window offers did not
+//	                look like the one every other window on the desktop offers.
+//	                The caption is now the ordinary one, the same the About box
+//	                gets. WS_EX_TOOLWINDOW was also what kept the panel off the
+//	                taskbar and out of Alt+Tab; an invisible owner window does
+//	                that now instead - see ensurePanelOwner.
 //	Content:        the same composed DIB, BitBlt to the client area from a
 //	                WM_PAINT handler.
 //	Colours:        GetSysColor, with one documented exception that is a Windows
@@ -204,7 +207,7 @@ const (
 	panelExStyleModern = uint32(win.WS_EX_LAYERED | win.WS_EX_TOOLWINDOW | win.WS_EX_TOPMOST)
 
 	panelStyleSystem   = uint32(win.WS_OVERLAPPED | win.WS_CAPTION | win.WS_SYSMENU)
-	panelExStyleSystem = uint32(win.WS_EX_TOOLWINDOW | win.WS_EX_TOPMOST)
+	panelExStyleSystem = uint32(win.WS_EX_TOPMOST)
 )
 
 // ---------------------------------------------------------------------------
@@ -652,6 +655,43 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 	return p
 }
 
+// The owner of the system look's panel: one invisible, zero-sized window that is
+// never shown and never painted.
+//
+// It exists because of what dropping WS_EX_TOOLWINDOW cost. That flag was doing
+// two jobs at once - the thin palette caption, which was wrong and is gone, and
+// keeping the window out of the taskbar and out of Alt+Tab, which the panel
+// promises on every platform and the other two backends deliver. Windows leaves
+// an OWNED top-level window out of both as well, and an owner is invisible, so
+// the caption stays exactly the one an ordinary application window gets.
+//
+// One owner for the life of the process, not one per panel: it holds no state, it
+// is never destroyed, and the process exiting takes it with it. A failure is
+// logged and survivable - the panel then behaves as it would have with no owner
+// at all, which is to say it picks up a taskbar button.
+var (
+	panelOwnerOnce sync.Once
+	panelOwner     win.HWND
+)
+
+func ensurePanelOwner(inst win.HINSTANCE) win.HWND {
+	panelOwnerOnce.Do(func() {
+		cn := utf16Of(panelClassName)
+		name := utf16Of("")
+		panelOwner = win.CreateWindowEx(
+			0,
+			&cn[0], &name[0],
+			win.WS_POPUP,
+			0, 0, 0, 0,
+			0, 0, inst, nil,
+		)
+		if panelOwner == 0 {
+			log.Print("forecast: the owner window could not be created; the panel will show a taskbar button")
+		}
+	})
+	return panelOwner
+}
+
 // styles is the window's shape in this look. CreateWindowEx and frameOverhead
 // must both be fed from here, never from a literal, or the frame the layout pays
 // for stops being the frame the window has.
@@ -669,12 +709,12 @@ func (p *panel) styles() (style, exStyle uint32) {
 // WS_POPUP has no non-client pixels at all, AdjustWindowRectEx would answer 0,0
 // for it, and there is no reason to make a call to be told so.
 //
-// It is asked about the SAME styles CreateWindowEx was given, both of them. The
-// extended style is not optional here: WS_EX_TOOLWINDOW is what makes the caption
-// the thin palette-window one, and asking without it over-reserves by the
-// difference between SM_CYCAPTION and SM_CYSMCAPTION - a few pixels of client
-// area below the composed image, which WM_PAINT does not cover and
-// WM_ERASEBKGND deliberately does not erase. See adjustWindowRectEx.
+// It is asked about the SAME styles CreateWindowEx was given, both of them, and
+// through the Ex form of the call. Passing anything else - or dropping the
+// extended style, or using the non-Ex AdjustWindowRect - answers for a frame this
+// window does not have, and the difference lands as client area below the
+// composed image, which WM_PAINT does not cover and WM_ERASEBKGND deliberately
+// does not erase. See adjustWindowRectEx.
 //
 // A failure answers 0,0 and says so. That is the safe direction to be wrong in:
 // too small a window clips the bottom of the last row, where too large a one
@@ -983,6 +1023,14 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		return
 	}
 
+	// The owner comes first, and before pending is set below: it is created with
+	// this same class, so a WM_NCCREATE arriving while pending is non-nil would
+	// hand it the panel that is about to be built.
+	var owner win.HWND
+	if p.sysLook {
+		owner = ensurePanelOwner(p.inst)
+	}
+
 	// Create INVISIBLE, at 1x1, in both looks. A layered window shows nothing
 	// until UpdateLayeredWindow has been called for it, so creating it with
 	// WS_VISIBLE only flashes an empty frame; the system look would flash
@@ -1003,7 +1051,7 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		&cn[0], &title[0],
 		style,
 		0, 0, 1, 1,
-		0, 0, p.inst, nil,
+		owner, 0, p.inst, nil,
 	)
 	if p.hwnd == 0 {
 		panelMu.Lock()
@@ -2352,8 +2400,8 @@ func clientPoint(lParam uintptr) (int32, int32) {
 // delivered that click down a channel to the menu-dispatch goroutine, and the
 // forecast has been fetched over the network, any grace the shell handed out
 // has certainly lapsed. When it is refused the documented consolation is that
-// Windows flashes the taskbar button, and a WS_EX_TOOLWINDOW has no taskbar
-// button, so the refusal is completely silent.
+// Windows flashes the taskbar button, and this window has none - it is owned, and
+// an owned window gets no button - so the refusal is completely silent.
 //
 // The AttachThreadInput dance is the standard workaround: while two threads
 // share an input queue, one may set focus within the other's windows.

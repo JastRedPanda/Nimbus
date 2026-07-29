@@ -142,15 +142,17 @@ func monitorFromRect(rc *win.RECT, flags uint32) win.HMONITOR {
 // borders and Bottom-Top the borders plus the caption.
 //
 // lxn/win has the non-Ex AdjustWindowRect, which darkmode_windows.go's
-// frameOverhead uses, and it is not good enough for the forecast panel: the
-// extended style is exactly what decides the caption's height here.
-// WS_EX_TOOLWINDOW asks for the thin palette-window caption, SM_CYSMCAPTION
-// rather than SM_CYCAPTION, and the non-Ex call has no way to be told about it,
-// so it would over-reserve by the difference - a few pixels of client area below
-// the composed image that WM_PAINT does not cover and WM_ERASEBKGND refuses to
-// erase, i.e. a strip of uninitialised memory along the bottom of the panel. The
-// settings window can use the non-Ex call safely because it is created with an
-// extended style of 0.
+// frameOverhead uses, and the Ex form is used here anyway: the extended style is
+// what decides a window's frame, and a frame computed for a style the window was
+// not created with lands as client area below the composed image - a strip that
+// WM_PAINT does not cover and WM_ERASEBKGND refuses to erase, i.e. uninitialised
+// memory along the bottom of the panel.
+//
+// The panel no longer asks for a caption of its own size - WS_EX_TOOLWINDOW and
+// its SM_CYSMCAPTION caption are gone, and the caption is the ordinary
+// SM_CYCAPTION one - so today the two calls would agree. Keeping the Ex form is
+// still right: it answers for whatever the window was actually given, and it will
+// go on being right if that ever changes again.
 //
 // Not AdjustWindowRectExForDpi, which is the per-monitor-DPI form: this process
 // declares SYSTEM dpiAwareness in its manifest, so every window it owns is drawn
