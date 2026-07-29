@@ -28,13 +28,35 @@ func createPen(style, width int32, color win.COLORREF) win.HPEN {
 
 const DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 
+// The colours this program paints its own windows in when Windows is dark, named
+// once because three windows use them and one of them had drifted.
+//
+// THEY ARE HARDCODED BECAUSE THEY HAVE TO BE. GetSysColor does not follow the
+// dark theme: COLOR_WINDOW answers white on a fully dark Windows 11, because the
+// dark theme was built beside the classic system colours rather than through
+// them. So a window that wants to look dark has no system colour to ask for and
+// must carry its own - which is exactly where the forecast panel went wrong. Its
+// system look picked the app's MODERN palette as the stand-in, a near-black
+// #1c1f26 with a blue cast, and ended up visibly darker than the About window
+// beside it. The right stand-in is what the rest of the program already paints.
+//
+// The light theme needs none of this: there GetSysColor tells the truth, and the
+// panel asks it.
+const (
+	darkSurface  = 0x002D2D2D // RGB(45,45,45), the window background
+	darkEdit     = 0x00373737 // RGB(55,55,55), input fields on that background
+	darkText     = 0x00FFFFFF
+	darkTextDim  = 0x00909090 // the muted grey, e.g. the version line
+	lightTextDim = 0x00787878 // its counterpart on a light background
+)
+
 func createDarkBrush() win.HBRUSH {
-	ret, _, _ := createSolidBrushProc.Call(uintptr(win.RGB(45, 45, 45)))
+	ret, _, _ := createSolidBrushProc.Call(uintptr(darkSurface))
 	return win.HBRUSH(ret)
 }
 
 func createEditBrush() win.HBRUSH {
-	ret, _, _ := createSolidBrushProc.Call(uintptr(win.RGB(55, 55, 55)))
+	ret, _, _ := createSolidBrushProc.Call(uintptr(darkEdit))
 	return win.HBRUSH(ret)
 }
 

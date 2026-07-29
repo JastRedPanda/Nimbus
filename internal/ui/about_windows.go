@@ -456,7 +456,7 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 
 	win.SetBkMode(hdc, win.TRANSPARENT)
 	if d.dark {
-		win.SetTextColor(hdc, win.COLORREF(0x00FFFFFF))
+		win.SetTextColor(hdc, win.COLORREF(darkText))
 	} else {
 		win.SetTextColor(hdc, win.COLORREF(0x00000000))
 	}
@@ -482,9 +482,9 @@ func (d *aboutDlg) onPaint(hwnd win.HWND) {
 	// The version sits below the subtitle in a muted grey that reads on both
 	// the light and the dark background this window can have.
 	if d.dark {
-		win.SetTextColor(hdc, win.COLORREF(0x00909090))
+		win.SetTextColor(hdc, win.COLORREF(darkTextDim))
 	} else {
-		win.SetTextColor(hdc, win.COLORREF(0x00787878))
+		win.SetTextColor(hdc, win.COLORREF(lightTextDim))
 	}
 	d.text(hdc, versionLine(), pad, y, cw-pad, d.dp(aboutVerH), win.DT_CENTER|win.DT_SINGLELINE)
 }

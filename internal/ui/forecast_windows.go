@@ -319,10 +319,33 @@ func highContrastOn() bool {
 // dark, so without this check the dark branch would swallow it.
 func panelPaletteSystem(dark bool) panelPalette {
 	if dark {
-		// The solid half of the dark palette: opaque sheet, square corners.
-		// Exactly what an opaque undecorated window would have drawn, now inside
-		// a decorated one.
-		return panelPaletteFor(true, false)
+		// The colours the rest of the program paints on a dark Windows, NOT the
+		// app's own Modern palette. That is what used to be here, and it was
+		// wrong in a way a screenshot showed at once: Modern's sheet is #1c1f26,
+		// a near-black with a blue cast, so the panel sat visibly darker and
+		// cooler than the About window next to it. This look is supposed to
+		// disappear into the desktop, and on a dark desktop the closest thing to
+		// the desktop this program can honestly claim is what it paints its other
+		// windows with.
+		//
+		// Asked from darkmode_windows.go rather than written out here, because
+		// About paints from the same constants - see the note there for why they
+		// have to be constants at all rather than a GetSysColor call.
+		sr, sg, sb := refRGB(darkSurface)
+		tr, tg, tb := refRGB(darkText)
+		hr, hg, hb := refRGB(darkTextDim)
+		return panelPalette{
+			sheet: premul(sr, sg, sb, 255),
+			// The two separator weights are the Modern dark palette's, and they
+			// stay: 0.28 and 0.10 of white are a RELATIVE statement about which
+			// line is the header rule and which is a row hairline, not a colour
+			// borrowed from a look this window is not in. They read the same over
+			// #2d2d2d as over #1c1f26.
+			rule:  premul(255, 255, 255, 71),
+			sep:   premul(255, 255, 255, 26),
+			text:  [3]uint8{tr, tg, tb},
+			thead: [3]uint8{hr, hg, hb},
+		}
 	}
 
 	wr, wg, wb := sysRGB(win.COLOR_WINDOW)
@@ -344,10 +367,15 @@ func panelPaletteSystem(dark bool) panelPalette {
 	}
 }
 
-// sysRGB unpacks one system colour. A COLORREF is 0x00bbggrr, so the byte order
-// is the opposite of the way the value is usually written down.
+// sysRGB unpacks one system colour, refRGB any COLORREF. A COLORREF is
+// 0x00bbggrr, so the byte order is the opposite of the way the value is usually
+// written down - which is invisible for the greys in darkmode_windows.go and
+// would bite the first time one of them is not grey.
 func sysRGB(index int) (r, g, b uint8) {
-	c := win.GetSysColor(index)
+	return refRGB(win.GetSysColor(index))
+}
+
+func refRGB(c uint32) (r, g, b uint8) {
 	return uint8(c), uint8(c >> 8), uint8(c >> 16)
 }
 
