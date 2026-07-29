@@ -41,18 +41,19 @@ package ui
 // way a GtkGrid of expanding cells distributes them. The point of the two files
 // is that the two platforms look like one product.
 //
-// HOW THE PIXELS GET THERE, and why it is not what anyone would write for this
-// window today. The whole panel is composed in pure Go into a premultiplied
-// image.RGBA, GDI is used for exactly one thing (turning strings into glyph
-// coverage, in a scratch bitmap), the result is copied into a top-down 32bpp DIB
-// section, and WM_PAINT BitBlts that DIB into the client area. That pipeline is
-// inherited: the panel used to be a WS_EX_LAYERED sheet fed by
-// UpdateLayeredWindow, which reads a premultiplied bitmap whose alpha any GDI
-// call would have destroyed - see panelpaint_windows.go. Nothing reads the alpha
-// channel any more, so the composition is history rather than a requirement, and
-// drawing the table with GDI straight into the paint DC would do the same job.
-// It is kept because it works and because its arithmetic is the GTK side's; if it
-// is ever replaced, replace it whole rather than half.
+// HOW THE PIXELS GET THERE. Ordinary GDI, the same calls about_windows.go makes:
+// FillRect for the sheet, the header rule and the row hairlines, DrawTextEx for
+// every caption, cell and weather symbol. It happens ONCE, in p.paint, into an
+// off-screen buffer exactly the size of the client area; WM_PAINT is a single
+// BitBlt of that buffer and nothing else. The content is a snapshot of one fetch
+// in a window that cannot be resized, so there is never anything to redraw.
+//
+// The panel used to be a WS_EX_LAYERED sheet fed to UpdateLayeredWindow, whose
+// premultiplied alpha any GDI call would have destroyed, and was therefore
+// composed by hand in Go - see panelpaint_windows.go for what that took. Both
+// are gone. What outlives them is the palette: two of its colours are stated as
+// white at a low alpha, and GDI has no alpha, so they are flattened against the
+// sheet colour once, where the palette is built. See panelPaletteSystem.
 //
 // Dragging:       WM_LBUTTONDOWN hands a press on the body to the system's own
 //                 move loop. NOT a WM_NCHITTEST that answers HTCAPTION, which
@@ -63,8 +64,6 @@ package ui
 //                 WM_ENTERSIZEMOVE as well as from WM_LBUTTONDOWN.
 
 import (
-	"image"
-	"image/color"
 	"log"
 	"runtime"
 	"strings"
@@ -161,18 +160,27 @@ const (
 // Palette
 // ---------------------------------------------------------------------------
 
-// panelPalette is the panel's colours, premultiplied and ready to composite.
-// They are the desktop's, not the app's - see panelPaletteSystem.
+// panelPalette is the panel's colours, ready for CreateSolidBrush and
+// SetTextColor. They are the desktop's, not the app's - see panelPaletteSystem.
+//
+// EVERY ONE OF THEM IS A SOLID COLORREF, and two of them were not always. The
+// header rule and the row hairlines are stated in the design, and on the GTK
+// side, as a colour at a fraction of full strength - white at alpha 71 and alpha
+// 26 over the sheet. GDI has no alpha: FillRect takes a solid brush and nothing
+// else, and there is no compositing step left to apply one. So the two are
+// blended against the sheet colour once, in panelPaletteSystem, and what is
+// stored here is the flat result. Drawing them as stated would paint a white
+// line across the table where a whisper of one belongs.
 //
 // There is no separate card colour because there is no card. The window IS the
 // sheet: one background with pagePad of padding inside it, which is what `.page`
 // states on the GTK side.
 type panelPalette struct {
-	sheet color.RGBA // the client area's background, premultiplied
-	rule  color.RGBA // .rule background, under the captions
-	sep   color.RGBA // separator background, between data rows
-	text  [3]uint8   // label color, the cells and the symbols
-	thead [3]uint8   // .thead color
+	sheet win.COLORREF // the client area's background
+	rule  win.COLORREF // .rule background, under the captions
+	sep   win.COLORREF // separator background, between data rows
+	text  win.COLORREF // label color: the cells and the symbols
+	thead win.COLORREF // .thead color
 }
 
 // highContrastOn reports whether a high contrast scheme is active.
@@ -231,49 +239,62 @@ func panelPaletteSystem(dark bool) panelPalette {
 		// Asked from darkmode_windows.go rather than written out here, because
 		// About paints from the same constants - see the note there for why they
 		// have to be constants at all rather than a GetSysColor call.
-		sr, sg, sb := refRGB(darkSurface)
-		tr, tg, tb := refRGB(darkText)
-		hr, hg, hb := refRGB(darkTextDim)
+		sheet := win.COLORREF(darkSurface)
 		return panelPalette{
-			sheet: premul(sr, sg, sb, 255),
+			sheet: sheet,
 			// 0.28 and 0.10 of white, which is a RELATIVE statement about which
 			// line is the header rule and which is a row hairline rather than a
 			// colour of the app's own. The pair reads the same over any dark
 			// surface, so it needs nothing from the theme.
-			rule:  premul(255, 255, 255, 71),
-			sep:   premul(255, 255, 255, 26),
-			text:  [3]uint8{tr, tg, tb},
-			thead: [3]uint8{hr, hg, hb},
+			//
+			// Alpha 71 and alpha 26 are those two fractions of 255, and they are
+			// SPENT HERE: what the table is actually painted with is the two greys
+			// they come to over darkSurface. See panelPalette.
+			rule:  blendOver(win.RGB(255, 255, 255), 71, sheet),
+			sep:   blendOver(win.RGB(255, 255, 255), 26, sheet),
+			text:  win.COLORREF(darkText),
+			thead: win.COLORREF(darkTextDim),
 		}
 	}
 
-	wr, wg, wb := sysRGB(win.COLOR_WINDOW)
-	tr, tg, tb := sysRGB(win.COLOR_WINDOWTEXT)
-	hr, hg, hb := sysRGB(win.COLOR_GRAYTEXT)
-	sr, sg, sb := sysRGB(win.COLOR_3DSHADOW)
+	sheet := win.COLORREF(win.GetSysColor(win.COLOR_WINDOW))
+	// COLOR_3DSHADOW is the theme's own divider shade - the line an etched border
+	// is drawn with - which is what the header rule is, at full strength.
+	shadow := win.COLORREF(win.GetSysColor(win.COLOR_3DSHADOW))
 
 	return panelPalette{
-		sheet: premul(wr, wg, wb, 255),
-		// COLOR_3DSHADOW is the theme's own divider shade - the line an etched
-		// border is drawn with - which is what the header rule is. The hairlines
-		// between data rows keep the same colour at the share of it the dark
-		// branch above gives them, 0.10 of 0.28, so the two weights stay
-		// distinguishable instead of collapsing into one flat grid.
-		rule:  premul(sr, sg, sb, 255),
-		sep:   premul(sr, sg, sb, 91), // 0.10/0.28 of the rule
-		text:  [3]uint8{tr, tg, tb},
-		thead: [3]uint8{hr, hg, hb},
+		sheet: sheet,
+		rule:  shadow,
+		// The hairlines between data rows keep the same shade at the share of it
+		// the dark branch above gives them, 0.10 of 0.28, so the two weights stay
+		// distinguishable instead of collapsing into one flat grid. That share is
+		// alpha 91, and like the dark branch's it is blended into the sheet here
+		// rather than carried into the painting.
+		sep:   blendOver(shadow, 91, sheet),
+		text:  win.COLORREF(win.GetSysColor(win.COLOR_WINDOWTEXT)),
+		thead: win.COLORREF(win.GetSysColor(win.COLOR_GRAYTEXT)),
 	}
 }
 
-// sysRGB unpacks one system colour, refRGB any COLORREF. A COLORREF is
-// 0x00bbggrr, so the byte order is the opposite of the way the value is usually
-// written down - which is invisible for the greys in darkmode_windows.go and
-// would bite the first time one of them is not grey.
-func sysRGB(index int) (r, g, b uint8) {
-	return refRGB(win.GetSysColor(index))
+// blendOver flattens a colour the design states with an alpha into the solid one
+// GDI can draw: src laid over the opaque colour beneath it at alpha/255.
+//
+// It is all that survives of the premultiplied compositing the panel used to do:
+// three colours once per panel, rather than a million pixels once per paint. It
+// is exact for the only case that reaches it, because the backdrop really is
+// opaque - it is the sheet the line is painted on.
+func blendOver(src win.COLORREF, alpha uint8, under win.COLORREF) win.COLORREF {
+	sr, sg, sb := refRGB(uint32(src))
+	ur, ug, ub := refRGB(uint32(under))
+	mix := func(s, u uint8) byte {
+		return byte((uint32(s)*uint32(alpha) + uint32(u)*uint32(255-alpha)) / 255)
+	}
+	return win.RGB(mix(sr, ur), mix(sg, ug), mix(sb, ub))
 }
 
+// refRGB unpacks a COLORREF, which is 0x00bbggrr: the byte order is the opposite
+// of the way the value is usually written down - which is invisible for the greys
+// in darkmode_windows.go and would bite the first time one of them is not grey.
 func refRGB(c uint32) (r, g, b uint8) {
 	return uint8(c), uint8(c >> 8), uint8(c >> 16)
 }
@@ -387,6 +408,16 @@ type panelFonts struct {
 	symbol win.HFONT // 0 when the Weather Icons face is not usable
 }
 
+// panelBrushes are the three fills the table is made of, created once with the
+// panel and destroyed with it rather than made and thrown away per WM_PAINT.
+// This program sits in a tray for weeks: a brush leaked per repaint is a handle
+// count that climbs all afternoon.
+type panelBrushes struct {
+	sheet win.HBRUSH
+	rule  win.HBRUSH
+	sep   win.HBRUSH
+}
+
 // panelMetrics is everything the layout needs to know about the fonts and the
 // strings, so that the arithmetic in layoutTable is a pure function of it.
 type panelMetrics struct {
@@ -428,14 +459,14 @@ type panel struct {
 	// whatever glyphs a substitute face happens to have at those codepoints.
 	haveSymbols bool
 
-	fonts panelFonts
-	geom  panelGeom
+	fonts   panelFonts
+	brushes panelBrushes
+	geom    panelGeom
 
 	x, y, w, h int32
 
-	img  *image.RGBA
-	surf *surface
-	mask *surface
+	// buf is the client area, drawn once and blitted on every WM_PAINT.
+	buf *backBuffer
 
 	// reported keeps OnMove to one call. Two WM_CLOSEs can be in flight at once -
 	// closeOpenPanel posts one per tray click, and the singleton is not released
@@ -539,8 +570,8 @@ func ensurePanelOwner(inst win.HINSTANCE) win.HWND {
 // It is asked about the SAME styles CreateWindowEx was given, both of them, and
 // through the Ex form of the call. Passing anything else - or dropping the
 // extended style, or using the non-Ex AdjustWindowRect - answers for a frame this
-// window does not have, and the difference lands as client area below the
-// composed image, which WM_PAINT does not cover and WM_ERASEBKGND deliberately
+// window does not have, and the difference lands as client area below the back
+// buffer, which WM_PAINT's BitBlt does not cover and WM_ERASEBKGND deliberately
 // does not erase. See adjustWindowRectEx.
 //
 // A failure answers 0,0 and says so. That is the safe direction to be wrong in:
@@ -558,11 +589,11 @@ func (p *panel) frame() (w, h int32) {
 
 // windowSize is the size to give the WINDOW.
 //
-// p.w and p.h are always the CLIENT size: they size p.img and p.surf, and the
-// composed image is exactly what the client area shows. The caption and borders
+// p.w and p.h are always the CLIENT size: they size the back buffer, and the
+// back buffer is exactly what the client area shows. The caption and borders
 // have to be added on top - hand p.w/p.h straight to CreateWindowEx and the
 // caption eats the top of the table, because the client area then comes out
-// shorter than the image by exactly the caption's height.
+// shorter than the buffer by exactly the caption's height.
 //
 // EVERY placement decision has to use this and not p.w/p.h: panelCorner and
 // clampToWork both reason about the window's edges against the work area, and
@@ -937,7 +968,15 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		case 0: // WM_QUIT
 			return
 		case -1:
-			log.Printf("forecast: GetMessage failed")
+			// Wound down exactly like the two failure exits above, and for the same
+			// reason: the window is still up, so nothing has delivered the
+			// WM_NCDESTROY that frees the fonts, the brushes and the back buffer.
+			// Returning bare would strand all of them for the life of the process
+			// and leave the *panel pinned in live, while the deferred releasePanel
+			// lets the next tray click build a second panel on top of the first.
+			log.Printf("forecast: GetMessage failed; closing the panel")
+			win.DestroyWindow(p.hwnd)
+			p.release()
 			return
 		}
 		win.TranslateMessage(&msg)
@@ -945,13 +984,13 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	}
 }
 
-// show composes the panel and puts the window where it belongs. It is called
+// show draws the panel and puts the window where it belongs. It is called
 // while the window is still hidden; run's ShowWindow is what reveals it.
 func (p *panel) show() bool {
 	p.paint()
 
 	// One call moves and resizes. It is given the WINDOW rect, and the window is
-	// sized so its CLIENT area is exactly the composed image - see windowSize.
+	// sized so its CLIENT area is exactly the back buffer - see windowSize.
 	//
 	// SWP_NOZORDER because WS_EX_TOPMOST already put the window at the top of the
 	// topmost band and this call has no business reordering it; SWP_NOACTIVATE
@@ -970,24 +1009,25 @@ func (p *panel) show() bool {
 	return true
 }
 
-// release frees every GDI object the panel owns.
+// release frees every GDI object the panel owns: the back buffer's DC and
+// bitmap, the three fonts and the three brushes.
 //
-// The DCs go first and the fonts second, which is the order that cannot leak.
-// DeleteObject refuses to free a GDI object that is still selected into a DC,
-// and a font that fails to delete leaks for the life of the process; deleting
-// the DC discards whatever was selected into it, so by the time freeFonts runs
-// there is provably no DC left to hold one. drawTextGroup does deselect the font
-// it selected, but this way the invariant does not depend on that.
+// The DC goes FIRST and the fonts and brushes second, which is the order that
+// cannot leak. DeleteObject refuses to free a GDI object that is still selected
+// into a DC, and a font or brush that fails to delete leaks for the life of the
+// process; deleting the DC discards whatever was selected into it, so by the time
+// the other two run there is provably no DC left to hold anything. paint does
+// select its original font back before it returns, and the brushes are never
+// selected at all - FillRect takes a brush as an argument rather than from the DC
+// - but this way the invariant does not rest on either fact.
 //
-// Both dispose and freeFonts are idempotent and nil-safe, so release can be
-// called twice - which it is, on the failure paths in run().
+// All three steps are idempotent and nil-safe, so release can be called twice -
+// which it is, on the failure paths in run().
 func (p *panel) release() {
-	p.surf.dispose()
-	p.mask.dispose()
+	p.buf.dispose()
+	p.buf = nil
 	p.freeFonts()
-	p.surf = nil
-	p.mask = nil
-	p.img = nil
+	p.freeBrushes()
 }
 
 // reportMove hands the panel's final position to the caller.
@@ -1052,7 +1092,8 @@ func (p *panel) reportMove() {
 // Layout
 // ---------------------------------------------------------------------------
 
-// build measures the content, sizes the window and allocates the surfaces.
+// build measures the content, sizes the window, and creates everything the panel
+// draws with: its fonts, its brushes and its back buffer.
 //
 // The loop exists because the layout is fixed-width: 620 units at 200% is 1240
 // pixels, which does not fit a 1280-wide screen once the edge margins are paid
@@ -1114,14 +1155,60 @@ func (p *panel) build(work win.RECT, haveWork bool) bool {
 		dpi = next
 	}
 
-	p.img = image.NewRGBA(image.Rect(0, 0, int(p.w), int(p.h)))
-	p.surf = newSurface(int(p.w), int(p.h))
-	p.mask = newSurface(int(p.w), int(p.h))
-	if p.surf == nil || p.mask == nil {
-		log.Printf("forecast: CreateDIBSection failed for %dx%d", p.w, p.h)
+	// Both of these are outside the loop: neither depends on the layout DPI, and
+	// the buffer cannot be sized until the loop has settled p.w and p.h.
+	//
+	// The window's own DC is borrowed as the reference the buffer's bitmap is made
+	// compatible with, because it has to be a DC of a real device - newBackBuffer
+	// says what happens otherwise. It is released immediately; the buffer keeps a
+	// memory DC of its own, and holding a window DC for the life of the panel
+	// would tie up one of the system's cached DCs for no reason.
+	ref := win.GetDC(p.hwnd)
+	if ref == 0 {
+		log.Print("forecast: GetDC failed; the panel has nothing to draw into")
 		return false
 	}
+	p.buf = newBackBuffer(ref, p.w, p.h)
+	win.ReleaseDC(p.hwnd, ref)
+	if p.buf == nil {
+		log.Printf("forecast: the %dx%d back buffer could not be created", p.w, p.h)
+		return false
+	}
+
+	return p.makeBrushes()
+}
+
+// makeBrushes creates the panel's three fills, once, from the flattened palette.
+//
+// Only the sheet's is worth failing over: it is what covers every pixel of the
+// client area, which is the promise WM_ERASEBKGND is allowed to decline to erase
+// on. A missing rule or hairline brush costs a line in the table and a line in
+// the log, and paint skips what it has no brush for rather than drawing it in
+// whatever the DC's stock brush happens to be - which is white, and would be a
+// far louder mistake than an absent hairline.
+func (p *panel) makeBrushes() bool {
+	p.brushes = panelBrushes{
+		sheet: createSolidBrush(p.pal.sheet),
+		rule:  createSolidBrush(p.pal.rule),
+		sep:   createSolidBrush(p.pal.sep),
+	}
+	if p.brushes.sheet == 0 {
+		log.Print("forecast: CreateSolidBrush failed for the panel background")
+		return false
+	}
+	if p.brushes.rule == 0 || p.brushes.sep == 0 {
+		log.Print("forecast: CreateSolidBrush failed for a table rule; that line will be missing")
+	}
 	return true
+}
+
+func (p *panel) freeBrushes() {
+	for _, b := range []win.HBRUSH{p.brushes.sheet, p.brushes.rule, p.brushes.sep} {
+		if b != 0 {
+			win.DeleteObject(win.HGDIOBJ(b))
+		}
+	}
+	p.brushes = panelBrushes{}
 }
 
 // makeFonts creates the fonts for this DPI. It returns false only when a font
@@ -1332,94 +1419,104 @@ func rectAt(x, y, w, h int32) win.RECT {
 // Painting
 // ---------------------------------------------------------------------------
 
+// paint draws the whole panel, once, into the back buffer. WM_PAINT does not
+// call it: WM_PAINT blits what it leaves behind.
+//
+// THE INVARIANT THE REST OF THE PAINT PATH RESTS ON is the first FillRect below.
+// g.sheet is 0,0,p.w,p.h - layoutTable builds it from the same two numbers it
+// returns as the panel's size - and windowSize made the client area exactly that,
+// so this one call writes every pixel of the buffer, and the single BitBlt in
+// WM_PAINT then writes every pixel of the client area. That is what entitles
+// WM_ERASEBKGND to refuse to erase and the window class to carry no background
+// brush; break it and the window shows whatever was on the screen before it.
+//
+// The order is sheet, then rules, then text, and it is not interchangeable.
+// FillRect is opaque and paints over whatever is beneath it, so any fill issued
+// after a string would wipe that string out. Text goes last for the same reason
+// it is drawn with SetBkMode(TRANSPARENT): a glyph then lays ink on what is
+// already there instead of arriving in a box of the DC's background colour.
 func (p *panel) paint() {
-	if p.img == nil || p.surf == nil {
+	if p.buf == nil || p.brushes.sheet == 0 {
 		return
 	}
-	// Start from zeroes. The sheet below covers every pixel of the image, so this
-	// is belt and braces rather than a step the design needs: nothing reads the
-	// alpha channel any more, the sheet being opaque and BitBlt out of a BI_RGB
-	// DIB copying only the B, G and R bytes. The rule that GDI never draws into
-	// this surface survives on the same terms - as the shape of the pipeline
-	// rather than as a load-bearing invariant. See panelpaint_windows.go.
-	for i := range p.img.Pix {
-		p.img.Pix[i] = 0
-	}
-
+	dc := p.buf.dc
 	g := &p.geom
 
-	paintRect(p.img, g.sheet.Left, g.sheet.Top,
-		g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top, p.pal.sheet)
+	fillRect(dc, &g.sheet, p.brushes.sheet)
 
-	paintRect(p.img, g.rule.Left, g.rule.Top,
-		g.rule.Right-g.rule.Left, g.rule.Bottom-g.rule.Top, p.pal.rule)
-	for i := range g.rows {
-		sep := g.rows[i].sep
-		// The last row's hairline is the zero RECT; paintRect draws nothing for
-		// a zero-sized rectangle.
-		paintRect(p.img, sep.Left, sep.Top,
-			sep.Right-sep.Left, sep.Bottom-sep.Top, p.pal.sep)
+	if p.brushes.rule != 0 {
+		fillRect(dc, &g.rule, p.brushes.rule)
 	}
-
-	const cellFlags = win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX
-
-	caps := make([]textRun, 0, numCols)
-	for i := 0; i < numCols && i < len(p.heads); i++ {
-		caps = append(caps, textRun{
-			text:  p.heads[i],
-			rect:  g.head[i],
-			flags: colAlign[i] | cellFlags | win.DT_END_ELLIPSIS,
-			font:  p.fonts.thead,
-		})
-	}
-
-	cells := make([]textRun, 0, len(p.rows)*numCols)
-	for r := range p.rows {
-		for i := 0; i < numCols; i++ {
-			if i == colCond {
-				if p.fonts.symbol == 0 {
-					continue
-				}
-				cells = append(cells, textRun{
-					text: p.rows[r].cell[i],
-					rect: g.rows[r].cell[i],
-					// DT_NOCLIP, and it is load-bearing. The row is the height
-					// of the symbol's BOX, matching the GtkImage on the other
-					// side, but GDI positions text by its LINE box, which in
-					// this typeface is 1.45 em - taller than the row. Clipping
-					// to the row would shave the top and bottom off every
-					// symbol. What overhangs is mostly the font's empty ascent
-					// and descent: the ink is about one em, centred to within a
-					// sixth of an em, so it reaches at most about a quarter of
-					// the row beyond the edge and stays clear of the hairline
-					// rowGapY away. Nothing can escape the bitmap either - GDI
-					// clips to the DC.
-					//
-					// No ellipsis on a single glyph either: DT_END_ELLIPSIS
-					// would replace the symbol with "..." rather than shrink it.
-					flags: colAlign[i] | cellFlags | win.DT_NOCLIP,
-					font:  p.fonts.symbol,
-				})
-				continue
-			}
-			cells = append(cells, textRun{
-				text:  p.rows[r].cell[i],
-				rect:  g.rows[r].cell[i],
-				flags: colAlign[i] | cellFlags | win.DT_END_ELLIPSIS,
-				font:  p.fonts.cell,
-			})
+	if p.brushes.sep != 0 {
+		for i := range g.rows {
+			// The last row's hairline is the zero RECT, and FillRect draws nothing
+			// for an empty rectangle: the hairlines go BETWEEN the data rows.
+			fillRect(dc, &g.rows[i].sep, p.brushes.sep)
 		}
 	}
 
-	// The symbols share the cells' group because they share its colour: the
-	// palette's foreground, which is the theme's own ink - COLOR_WINDOWTEXT - for
-	// the plainest of reasons, that the symbols are text, and the same value
-	// forecast_linux.go tints its rasterised glyphs with. One group is one
-	// full-surface composite pass, so folding them in is free.
-	drawTextGroup(p.img, p.mask, caps, p.pal.thead[0], p.pal.thead[1], p.pal.thead[2])
-	drawTextGroup(p.img, p.mask, cells, p.pal.text[0], p.pal.text[1], p.pal.text[2])
+	// A fresh memory DC starts OPAQUE with a white background colour, which would
+	// put every cell in a white rectangle on a dark panel and stamp a white band
+	// over the hairlines on any panel at all.
+	win.SetBkMode(dc, win.TRANSPARENT)
 
-	p.surf.blitFrom(p.img)
+	const cellFlags = win.DT_VCENTER | win.DT_SINGLELINE | win.DT_NOPREFIX
+	const textFlags = cellFlags | win.DT_END_ELLIPSIS
+
+	// Selected once here and put back at the end. The buffer's DC outlives this
+	// call and release() deletes the fonts, so nothing of the panel's may still be
+	// selected into it by then - see release.
+	//
+	// The order of what follows is chosen to keep SelectObject calls down to three
+	// rather than one per string: all the captions, then all the text cells, then
+	// all the symbols. Each group is one font and one colour.
+	prev := win.SelectObject(dc, win.HGDIOBJ(p.fonts.thead))
+
+	win.SetTextColor(dc, p.pal.thead)
+	for i := 0; i < numCols && i < len(p.heads); i++ {
+		drawText(dc, p.heads[i], g.head[i], colAlign[i]|textFlags)
+	}
+
+	// The cells and the symbols share a colour: the palette's foreground, which is
+	// the theme's own ink - COLOR_WINDOWTEXT - for the plainest of reasons, that
+	// the symbols are text, and the same value forecast_linux.go tints its
+	// rasterised glyphs with. So the colour is set once for both groups.
+	win.SetTextColor(dc, p.pal.text)
+	win.SelectObject(dc, win.HGDIOBJ(p.fonts.cell))
+	for r := range p.rows {
+		for i := 0; i < numCols; i++ {
+			if i == colCond {
+				continue
+			}
+			drawText(dc, p.rows[r].cell[i], g.rows[r].cell[i], colAlign[i]|textFlags)
+		}
+	}
+
+	// A zero symbol font is the documented outcome of a weather typeface GDI could
+	// not register or resolved to something else - see makeFonts - and the column
+	// is then simply left empty rather than filled with a substitute face's idea of
+	// U+F0xx.
+	if p.fonts.symbol != 0 {
+		win.SelectObject(dc, win.HGDIOBJ(p.fonts.symbol))
+		for r := range p.rows {
+			// DT_NOCLIP, and it is load-bearing. The row is the height of the
+			// symbol's BOX, matching the GtkImage on the other side, but GDI
+			// positions text by its LINE box, which in this typeface is 1.45 em -
+			// taller than the row. Clipping to the row would shave the top and
+			// bottom off every symbol. What overhangs is mostly the font's empty
+			// ascent and descent: the ink is about one em, centred to within a sixth
+			// of an em, so it reaches at most about a quarter of the row beyond the
+			// edge and stays clear of the hairline rowGapY away. Nothing can escape
+			// the buffer either - GDI clips to the DC.
+			//
+			// No ellipsis on a single glyph either: DT_END_ELLIPSIS would replace
+			// the symbol with "..." rather than shrink it.
+			drawText(dc, p.rows[r].cell[colCond], g.rows[r].cell[colCond],
+				colAlign[colCond]|cellFlags|win.DT_NOCLIP)
+		}
+	}
+
+	win.SelectObject(dc, prev)
 }
 
 // ---------------------------------------------------------------------------
@@ -1548,17 +1645,22 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		var ps win.PAINTSTRUCT
 		dc := win.BeginPaint(hwnd, &ps)
 		if dc != 0 {
-			// The whole client area in one BitBlt, not ps.RcPaint: the client area
-			// IS the composed image, pixel for pixel - windowSize added the frame
-			// on the outside - so there is nothing to be gained by clipping to the
-			// damaged part of an image that is already in memory, and a partial
-			// blit is one more thing to get wrong.
+			// ONE BitBlt and nothing else, which is the whole of why this window
+			// cannot flicker: the panel was drawn into the buffer when it was
+			// built, so a repaint copies a finished picture instead of assembling
+			// one in front of the user.
+			//
+			// The whole client area, not ps.RcPaint: the client area IS the buffer,
+			// pixel for pixel - windowSize added the frame on the outside - so
+			// there is nothing to be gained by clipping to the damaged part of a
+			// picture that is already in memory, and a partial blit is one more
+			// thing to get wrong.
 			//
 			// A failure needs no branch. blitTo answers false only for a disposed
-			// surface or a null DC, and either way the client area keeps whatever
+			// buffer or a null DC, and either way the client area keeps whatever
 			// the system last showed rather than becoming garbage: WM_ERASEBKGND
 			// painted nothing over it.
-			p.surf.blitTo(dc)
+			p.buf.blitTo(dc)
 			win.EndPaint(hwnd, &ps)
 			return 0
 		}
@@ -1572,11 +1674,16 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 
 	case win.WM_ERASEBKGND:
 		// "I erased it", because the WM_PAINT above covers every pixel of the
-		// client area from the DIB and erasing first would only paint those pixels
-		// twice and flicker while doing it. The client area cannot be larger than
-		// the image either: it is set from windowSize, and the panel is far wider
-		// than the SM_CXMIN a captioned window's minimum tracking size could clamp
-		// it to - 620 layout units is 465 pixels even at the minLayoutDPI floor.
+		// client area from the back buffer and erasing first would only paint those
+		// pixels twice and flicker while doing it.
+		//
+		// THIS IS ONLY SAFE BECAUSE OF TWO THINGS, and both are enforced elsewhere.
+		// The buffer is written edge to edge - p.paint's first FillRect, which is
+		// where that invariant is stated and argued. And the client area is never
+		// larger than the buffer, being sized from windowSize: the panel is far
+		// wider than the SM_CXMIN a captioned window's minimum tracking size could
+		// clamp it to, 620 layout units being 465 pixels even at the minLayoutDPI
+		// floor.
 		return 1
 
 	case win.WM_CLOSE:

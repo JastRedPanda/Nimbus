@@ -2,218 +2,170 @@
 
 package ui
 
-// Everything the forecast panel draws with.
+// Everything the forecast panel draws with: the off-screen buffer it is drawn
+// into, the fonts it is drawn in, and the memory DC the layout is measured
+// against.
 //
-// THE RULE THAT SHAPES THIS FILE: GDI must never touch the panel surface. Every
-// GDI drawing call writes the R, G and B bytes of a 32bpp DIB and leaves the
-// fourth byte exactly as it found it, so on a surface whose alpha is meaningful
-// it produces shapes and glyphs in the right colour with alpha 0 - invisible
-// content on a window that is otherwise pixel perfect.
+// The panel is drawn with ordinary GDI - FillRect for the sheet and the two
+// weights of rule, DrawTextEx for every caption, cell and weather symbol - the
+// same calls about_windows.go paints itself with, and the weather typeface is
+// just another face to ask for, because internal/fonts has registered it with
+// GDI privately.
 //
-// So the panel is composed in pure Go into a premultiplied image.RGBA and
-// copied into the DIB at the end. GDI is used for exactly one thing: turning a
-// string into glyph coverage, in a SEPARATE scratch DIB that is white on black
-// and therefore has no alpha to destroy.
+// It was not always. The panel used to be a WS_EX_LAYERED sheet fed to
+// UpdateLayeredWindow, which reads a PREMULTIPLIED 32bpp bitmap, and every GDI
+// drawing call writes three bytes of every four and leaves the fourth as it
+// found it - so a DrawText on that bitmap produced the right glyphs at alpha 0,
+// which is to say nothing at all. The panel was therefore composed by hand in Go
+// into an image.RGBA, and GDI was allowed exactly one job: rendering strings into
+// a separate black-and-white scratch bitmap whose grey levels were read back as
+// glyph coverage. That window is gone, there is no alpha channel left to
+// protect, and the composition went with it.
 //
-// The alpha stopped being meaningful when the panel stopped being a layered
-// window: the surface now reaches the screen through a BitBlt that reads three
-// bytes of every four. What is left is a composition pipeline nobody would write
-// for an opaque window, kept because it works and because its arithmetic is
-// shared with the GTK backend - see forecast_windows.go. The rule stands with it:
-// the moment a DrawText lands on this surface, the file no longer holds together
-// as one thing.
+// One thing outlives it. Colours the design states with an alpha - the header
+// rule, the row hairlines - have to be flattened into solid COLORREFs before
+// they can be drawn, because GDI has no alpha. That is done once, where the
+// palette is built: see panelPaletteSystem in forecast_windows.go.
 
 import (
-	"image"
-	"image/color"
 	"syscall"
-	"unsafe"
 
 	"github.com/lxn/win"
 )
 
 // ---------------------------------------------------------------------------
-// The DIB surface
+// The back buffer
 // ---------------------------------------------------------------------------
 
-// surface is a top-down 32bpp BGRA DIB section selected into a memory DC: the
-// bitmap WM_PAINT blits from, and the bitmap GDI text lands in.
+// backBuffer is the panel's client area drawn off screen: a memory DC with a
+// screen-compatible bitmap selected into it.
 //
-// Top-down (a NEGATIVE BiHeight) is not cosmetic. It makes row 0 the top row so
-// the byte indexing matches image.RGBA with no vertical flip, and it is a hard
-// requirement of DrawThemeTextEx's DTT_COMPOSITED should that alternative ever
-// be tried here.
-type surface struct {
+// It earns its place twice over. WM_PAINT must not show the window assembling
+// itself, and the panel is a background, a rule, a hairline between each pair of
+// its seven rows and some forty strings - a sequence long enough to watch if it
+// ran against the window's own DC. And the content cannot change while the panel is open: it is a
+// snapshot of one fetch in a window that cannot be resized, so drawing it once
+// and blitting it on every WM_PAINT is not merely flicker-free but does no
+// drawing at all per repaint.
+//
+// The bitmap is a plain device-compatible one, NOT the top-down 32bpp DIB
+// section this used to be. Nothing reads its bytes any more - GDI writes them
+// and BitBlt copies them - so the pixel format is the display's business rather
+// than this file's.
+type backBuffer struct {
 	dc     win.HDC
 	bmp    win.HBITMAP
 	oldBmp win.HGDIOBJ
-	bits   []byte // BGRA, premultiplied, stride = w*4, row 0 = top
-	w, h   int
+	w, h   int32
 }
 
-func newSurface(w, h int) *surface {
-	if w <= 0 || h <= 0 {
+// newBackBuffer builds a buffer w by h pixels.
+//
+// ref must be a DC of a REAL DEVICE - a window's, typically - because the bitmap
+// is made compatible with it. CreateCompatibleBitmap against a memory DC answers
+// a bitmap compatible with what that DC currently holds, and a fresh memory DC
+// holds the 1x1 monochrome bitmap it is born with, so the panel would come out
+// in two colours. The memory DC itself is created from ref for the same reason.
+func newBackBuffer(ref win.HDC, w, h int32) *backBuffer {
+	if ref == 0 || w <= 0 || h <= 0 {
 		return nil
 	}
-	dc := win.CreateCompatibleDC(0)
+	dc := win.CreateCompatibleDC(ref)
 	if dc == 0 {
 		return nil
 	}
-	bmi := &win.BITMAPINFOHEADER{
-		BiSize:        uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
-		BiWidth:       int32(w),
-		BiHeight:      -int32(h), // negative => top-down
-		BiPlanes:      1,
-		BiBitCount:    32,
-		BiCompression: win.BI_RGB,
-	}
-	// CreateDIBSection's real parameter is a BITMAPINFO. lxn/win types it as
-	// *BITMAPINFOHEADER, which is safe here and only here: at 32bpp with
-	// BI_RGB no colour table follows the header and none is read.
-	var ptr unsafe.Pointer
-	bmp := win.CreateDIBSection(dc, bmi, win.DIB_RGB_COLORS, &ptr, 0, 0)
-	if bmp == 0 || ptr == nil {
+	bmp := win.CreateCompatibleBitmap(ref, w, h)
+	if bmp == 0 {
 		win.DeleteDC(dc)
 		return nil
 	}
-	s := &surface{
-		dc: dc,
-		// The stride is w*4 with no padding: DIB rows are DWORD aligned and at
-		// 32bpp every row is already a whole number of DWORDs.
-		bits: unsafe.Slice((*byte)(ptr), w*h*4),
-		bmp:  bmp,
-		w:    w,
-		h:    h,
-	}
-	s.oldBmp = win.SelectObject(dc, win.HGDIOBJ(bmp))
-	return s
+	b := &backBuffer{dc: dc, bmp: bmp, w: w, h: h}
+	b.oldBmp = win.SelectObject(dc, win.HGDIOBJ(bmp))
+	return b
 }
 
-func (s *surface) dispose() {
-	if s == nil || s.dc == 0 {
+// dispose frees the DC and the bitmap. It is nil-safe and idempotent, because
+// the failure paths in run() call it after the window procedure may already
+// have.
+//
+// The original bitmap is selected back first: DeleteObject refuses to free a GDI
+// object that is still selected into a DC, and a bitmap the size of the panel
+// leaking once per showing is not a leak this program can afford - it lives in
+// the tray for weeks.
+func (b *backBuffer) dispose() {
+	if b == nil || b.dc == 0 {
 		return
 	}
-	if s.oldBmp != 0 {
-		win.SelectObject(s.dc, s.oldBmp)
+	if b.oldBmp != 0 {
+		win.SelectObject(b.dc, b.oldBmp)
 	}
-	win.DeleteObject(win.HGDIOBJ(s.bmp))
-	win.DeleteDC(s.dc)
-	s.bits = nil
-	s.dc = 0
-	s.bmp = 0
+	win.DeleteObject(win.HGDIOBJ(b.bmp))
+	win.DeleteDC(b.dc)
+	b.dc = 0
+	b.bmp = 0
 }
 
-func (s *surface) clear() {
-	for i := range s.bits {
-		s.bits[i] = 0
-	}
-}
-
-// blitFrom copies a premultiplied image.RGBA into the DIB.
+// blitTo copies the whole buffer onto a device context at its origin, which is
+// how the panel reaches the screen. The destination is the window's client area,
+// obtained from BeginPaint inside WM_PAINT.
 //
-// The only difference between the two buffers is channel order: GDI's 32bpp
-// BI_RGB layout is B, G, R, A in memory. The alpha byte is carried across for
-// completeness rather than for a reader - see the head of this file.
-func (s *surface) blitFrom(src *image.RGBA) {
-	for y := 0; y < s.h; y++ {
-		so := src.PixOffset(0, y)
-		do := y * s.w * 4
-		for x := 0; x < s.w; x++ {
-			si := so + x*4
-			di := do + x*4
-			s.bits[di+0] = src.Pix[si+2] // B
-			s.bits[di+1] = src.Pix[si+1] // G
-			s.bits[di+2] = src.Pix[si+0] // R
-			s.bits[di+3] = src.Pix[si+3] // A
-		}
-	}
-}
-
-// blitTo copies the whole surface onto a device context at its origin, which is
-// how the composed image reaches the screen. The destination is the window's
-// client area, obtained from BeginPaint inside WM_PAINT.
-//
-// A plain SRCCOPY needs no vertical flip and no attention to alpha, and both facts
-// come from how newSurface built the DIB. Top-down, so row 0 is the top row in the
-// destination as well as in the source. BI_RGB at 32bpp declares no alpha channel,
-// so GDI reads the B, G and R bytes and ignores the fourth - which is exactly
-// right here, because the sheet is opaque and the alpha the composition wrote is
-// 255 everywhere it matters and meaningless everywhere else.
-//
-// This does not breach the rule at the top of this file. GDI is READING the
-// surface, not drawing into it; nothing here can touch a byte of it.
-func (s *surface) blitTo(dc win.HDC) bool {
-	if s == nil || s.dc == 0 || dc == 0 {
+// The whole buffer, never a sub-rectangle: the buffer IS the client area, pixel
+// for pixel - windowSize adds the caption and borders on the outside - so this
+// single call is what makes "every pixel of the client area is written on every
+// paint" true, and WM_ERASEBKGND's refusal to erase safe.
+func (b *backBuffer) blitTo(dc win.HDC) bool {
+	if b == nil || b.dc == 0 || dc == 0 {
 		return false
 	}
-	return win.BitBlt(dc, 0, 0, int32(s.w), int32(s.h), s.dc, 0, 0, win.SRCCOPY)
+	return win.BitBlt(dc, 0, 0, b.w, b.h, b.dc, 0, 0, win.SRCCOPY)
 }
 
 // ---------------------------------------------------------------------------
-// Shapes
+// Brushes and text
 // ---------------------------------------------------------------------------
 
-// paintRect fills an axis-aligned rectangle: the sheet, the table's rule and its
-// row separators.
+// createSolidBrush wraps HBRUSH CreateSolidBrush(COLORREF crColor), which
+// lxn/win does not export.
 //
-// Every shape the panel has is on the pixel grid and square-cornered, so this
-// straight premultiplied source-over is the whole of the panel's geometry. There
-// is nothing here for a rasteriser to antialias and this loop cannot fail to be
-// exact.
+// darkmode_windows.go already reaches for that gdi32 entry through
+// createSolidBrushProc, for the two fixed greys it names outright; its lazy proc
+// is shared here rather than declared a second time. Not to economise on the
+// handle - LoadLibrary is reference counted, which is why panelapi_windows.go
+// opens a gdi32 handle of its own without apology - but because a second NewProc
+// for an entry point that already has one is a duplicate declaration of
+// something that works.
 //
-// It CLIPS rather than declining to draw: a rule is the full width of the sheet
-// and a rounding error of one pixel at the far edge would otherwise silently lose
-// the whole line.
-func paintRect(dst *image.RGBA, x, y, w, h int32, c color.RGBA) {
-	if w <= 0 || h <= 0 || c.A == 0 {
+// What the panel needs and those two wrappers cannot give is the general form:
+// its fills are COMPUTED - the system's window colour, and two rules flattened
+// out of an alpha - so the colour is not known until runtime.
+func createSolidBrush(c win.COLORREF) win.HBRUSH {
+	ret, _, _ := createSolidBrushProc.Call(uintptr(c))
+	return win.HBRUSH(ret)
+}
+
+// drawText draws one string inside a rectangle, in whatever font, text colour
+// and background mode are currently selected into dc. Callers set those once per
+// group rather than per string, which is why they are not parameters here.
+//
+// The rectangle is taken BY VALUE and its address handed to Win32 from this
+// frame: DrawTextEx's lpRect is [in,out], so the caller's copy - which is the
+// layout's own geometry, drawn from more than once - must not be the one it is
+// given.
+//
+// An empty string or a collapsed rectangle draws nothing. Both are reachable: a
+// locale can be short of a caption, and tableColumns can scale a column to
+// nothing on a very narrow layout.
+func drawText(dc win.HDC, s string, rc win.RECT, flags uint32) {
+	if s == "" || rc.Right <= rc.Left {
 		return
 	}
-	b := dst.Bounds()
-	x0, y0 := max(int(x), b.Min.X), max(int(y), b.Min.Y)
-	x1, y1 := min(int(x+w), b.Max.X), min(int(y+h), b.Max.Y)
-	if x0 >= x1 || y0 >= y1 {
-		return
-	}
-	// Premultiplied source-over: out = src + dst*(1-srcA). It cannot overflow,
-	// because a premultiplied component is never larger than its own alpha:
-	// src.C + dst.C*(255-src.A)/255 <= src.A + (255 - src.A) = 255. An opaque
-	// colour falls out of the same expression with inv = 0, so it needs no case
-	// of its own.
-	inv := 255 - uint32(c.A)
-	for py := y0; py < y1; py++ {
-		row := dst.PixOffset(x0, py)
-		for px := x0; px < x1; px++ {
-			dst.Pix[row+0] = uint8(uint32(c.R) + uint32(dst.Pix[row+0])*inv/255)
-			dst.Pix[row+1] = uint8(uint32(c.G) + uint32(dst.Pix[row+1])*inv/255)
-			dst.Pix[row+2] = uint8(uint32(c.B) + uint32(dst.Pix[row+2])*inv/255)
-			dst.Pix[row+3] = uint8(uint32(c.A) + uint32(dst.Pix[row+3])*inv/255)
-			row += 4
-		}
-	}
-}
-
-// premul converts a straight (r,g,b,a) design colour into the premultiplied
-// form both image.RGBA and the DIB store.
-func premul(r, g, b, a uint8) color.RGBA {
-	return color.RGBA{
-		R: uint8(uint32(r) * uint32(a) / 255),
-		G: uint8(uint32(g) * uint32(a) / 255),
-		B: uint8(uint32(b) * uint32(a) / 255),
-		A: a,
-	}
+	u := utf16Of(s)
+	win.DrawTextEx(dc, &u[0], -1, &rc, flags, nil)
 }
 
 // ---------------------------------------------------------------------------
-// Text
+// Fonts
 // ---------------------------------------------------------------------------
-
-// textRun is one string to be drawn in one font, in one colour group.
-type textRun struct {
-	text  string
-	rect  win.RECT
-	flags uint32
-	font  win.HFONT
-}
 
 // panelFont builds a font at a POINT size scaled for the window's DPI, which is
 // how every type size in the panel except the weather symbol is stated - they
@@ -236,11 +188,13 @@ func panelFont(pt, weight, dpi int32) win.HFONT {
 // come out about 20% too small, and for the weather typeface, whose internal
 // leading is 45% of its em, very much more than that.
 //
-// LfQuality is ANTIALIASED_QUALITY rather than the CLEARTYPE_QUALITY the rest of
-// this package asks for. What comes back from the mask is read as coverage, one
-// value per pixel, and subpixel antialiasing answers three; asking for grayscale
-// explicitly is what keeps the arithmetic in compositeMask exact rather than
-// approximate.
+// LfQuality is CLEARTYPE_QUALITY, the same the rest of this package asks for. It
+// used to be ANTIALIASED_QUALITY, and that was not a preference: the glyphs were
+// rendered into a scratch bitmap and read back as one coverage value per pixel,
+// where subpixel antialiasing answers three. Nothing reads glyph pixels any more
+// - they go straight onto an opaque background - so the panel gets the same
+// subpixel rendering as every other window on the desktop, which is what it
+// should have looked like all along.
 //
 // face is passed rather than assumed because this is also how the embedded
 // weather typeface is requested - internal/fonts has registered it with GDI
@@ -255,7 +209,7 @@ func panelFontPx(px, weight int32, face string) win.HFONT {
 		LfCharSet:        win.DEFAULT_CHARSET,
 		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
 		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
-		LfQuality:        win.ANTIALIASED_QUALITY,
+		LfQuality:        win.CLEARTYPE_QUALITY,
 		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
 	}
 	setFaceName(&lf, face)
@@ -284,10 +238,14 @@ func faceOf(f win.HFONT) (string, bool) {
 	return name, ok
 }
 
+// ---------------------------------------------------------------------------
+// Measurement
+// ---------------------------------------------------------------------------
+
 // measureDC is a memory DC used only to ask GDI about font metrics. Text
 // extents come from the selected font and the mapping mode, never from the
 // bitmap, so the default 1x1 monochrome bitmap a fresh memory DC carries is
-// enough - and it has to be, because the real surface cannot be sized until
+// enough - and it has to be, because the back buffer cannot be sized until
 // these measurements are in.
 type measureDC struct{ dc win.HDC }
 
@@ -347,87 +305,4 @@ func utf16Of(s string) []uint16 {
 		return []uint16{0}
 	}
 	return u
-}
-
-// drawTextGroup renders every run in one colour group and composites the result
-// into dst at (r,g,b), fully opaque.
-//
-// The mask trick: white text on a black surface with BkMode TRANSPARENT leaves
-// each channel byte at exactly coverage*255, because dst = 255*cov +
-// 0*(1-cov). That is a perfect 8-bit alpha mask, and no GDI call ever went
-// anywhere near the panel's own alpha channel.
-func drawTextGroup(dst *image.RGBA, mask *surface, runs []textRun, r, g, b uint8) {
-	if len(runs) == 0 || mask == nil {
-		return
-	}
-	mask.clear()
-	win.SetBkMode(mask.dc, win.TRANSPARENT)
-	win.SetTextColor(mask.dc, win.RGB(255, 255, 255))
-
-	var restore win.HGDIOBJ
-	for i := range runs {
-		run := &runs[i]
-		if run.rect.Right <= run.rect.Left || run.text == "" {
-			continue
-		}
-		if run.font != 0 {
-			prev := win.SelectObject(mask.dc, win.HGDIOBJ(run.font))
-			if restore == 0 {
-				restore = prev
-			}
-		}
-		u := utf16Of(run.text)
-		// DrawTextEx's rect is [in,out]; pass a copy so the caller's geometry
-		// survives.
-		rc := run.rect
-		win.DrawTextEx(mask.dc, &u[0], -1, &rc, run.flags, nil)
-	}
-	if restore != 0 {
-		// Leave no font selected: DeleteObject refuses to free a GDI object
-		// that is still selected into a DC, and the font would leak.
-		win.SelectObject(mask.dc, restore)
-	}
-
-	// GDI batches its drawing calls. Without this the bytes read below can
-	// predate the DrawTextEx calls that were supposed to produce them.
-	win.GdiFlush()
-
-	compositeMask(dst, mask, r, g, b)
-}
-
-// compositeMask does premultiplied source-over of a solid colour through an
-// 8-bit coverage mask:
-//
-//	out.C = src.C*cov/255 + dst.C*(1 - cov/255)
-//	out.A = cov           + dst.A*(1 - cov/255)
-//
-// The coverage is the mean of the three channels. Under grayscale antialiasing
-// they are equal; if Windows overrides the requested quality back to ClearType
-// they are the three subpixel coverages, and the mean is a reasonable
-// grayscale reduction of them.
-func compositeMask(dst *image.RGBA, mask *surface, sr, sg, sb uint8) {
-	w, h := mask.w, mask.h
-	if w > dst.Bounds().Dx() {
-		w = dst.Bounds().Dx()
-	}
-	if h > dst.Bounds().Dy() {
-		h = dst.Bounds().Dy()
-	}
-	for y := 0; y < h; y++ {
-		mo := y * mask.w * 4
-		do := dst.PixOffset(0, y)
-		for x := 0; x < w; x++ {
-			mi := mo + x*4
-			cov := (uint32(mask.bits[mi+0]) + uint32(mask.bits[mi+1]) + uint32(mask.bits[mi+2])) / 3
-			if cov == 0 {
-				continue
-			}
-			inv := 255 - cov
-			p := do + x*4
-			dst.Pix[p+0] = uint8((uint32(sr)*cov + uint32(dst.Pix[p+0])*inv) / 255)
-			dst.Pix[p+1] = uint8((uint32(sg)*cov + uint32(dst.Pix[p+1])*inv) / 255)
-			dst.Pix[p+2] = uint8((uint32(sb)*cov + uint32(dst.Pix[p+2])*inv) / 255)
-			dst.Pix[p+3] = uint8(cov + uint32(dst.Pix[p+3])*inv/255)
-		}
-	}
 }

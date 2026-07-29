@@ -6,11 +6,14 @@ package ui
 // export. Verified absent by grepping the module source at
 // go list -m -f '{{.Dir}}' github.com/lxn/win.
 //
-// Every call goes through syscall.SyscallN rather than LazyProc.Call. The
-// unsafe.Pointer rules give a pointer-to-uintptr conversion its keepalive
-// guarantee only inside the argument list of an ASSEMBLY-implemented function;
-// Proc.Call is ordinary Go, so the pointer it was handed is not kept alive for
-// the duration of the call. runtime.KeepAlive belts the braces.
+// Every call goes through syscall.SyscallN rather than LazyProc.Call, and it is
+// worth saying plainly that this is a house style rather than a safety
+// requirement, because this comment used to claim the opposite. BOTH are safe:
+// syscall.SyscallN is covered by unsafe.Pointer rule (4), and Proc.Call and
+// LazyProc.Call are marked //go:uintptrescapes in the standard library
+// (syscall/dll_windows.go), which is the same keepalive guarantee reached a
+// different way. darkmode_windows.go uses Proc.Call and is not wrong to.
+// runtime.KeepAlive where it appears below is belt and braces, not a fix.
 //
 // The DLL handles are private to this file on purpose: darkmode_windows.go has
 // its own user32DLL/gdi32DLL and this file must not depend on names another
@@ -79,9 +82,9 @@ func monitorFromRect(rc *win.RECT, flags uint32) win.HMONITOR {
 // lxn/win has the non-Ex AdjustWindowRect, which darkmode_windows.go's
 // frameOverhead uses, and the Ex form is used here anyway: the extended style is
 // what decides a window's frame, and a frame computed for a style the window was
-// not created with lands as client area below the composed image - a strip that
-// WM_PAINT does not cover and WM_ERASEBKGND refuses to erase, i.e. uninitialised
-// memory along the bottom of the panel.
+// not created with lands as client area below what WM_PAINT draws - a strip that
+// the back buffer does not cover and WM_ERASEBKGND refuses to erase, i.e.
+// uninitialised memory along the bottom of the panel.
 //
 // The panel no longer asks for a caption of its own size - WS_EX_TOOLWINDOW and
 // its SM_CYSMCAPTION caption are gone, and the caption is the ordinary
