@@ -463,13 +463,6 @@ func (l Lang) FontScalePct() string {
 	return "%"
 }
 
-func (l Lang) PinForecast() string {
-	if l == UK {
-		return "Закривати лише кліком по іконці"
-	}
-	return "Close only from the tray icon"
-}
-
 func (l Lang) CityLabel() string {
 	if l == UK {
 		return "Місто:"

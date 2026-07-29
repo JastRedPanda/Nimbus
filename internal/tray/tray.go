@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"sync/atomic"
 
 	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
@@ -16,12 +15,11 @@ import (
 )
 
 type app struct {
-	// cfgMu guards exactly three things, and nothing else in this struct: the cfg
-	// POINTER, the pinned mirror that has to change with it, and the disk write
-	// that persists the result. An installed config is never mutated in place -
-	// saveForecastPos copies it and swaps the pointer, and openSettings publishes
-	// the struct the backend built while it is still private - so a holder of the
-	// old pointer keeps reading a consistent
+	// cfgMu guards exactly two things, and nothing else in this struct: the cfg
+	// POINTER, and the disk write that persists the result. An installed config is
+	// never mutated in place - saveForecastPos copies it and swaps the pointer,
+	// and openSettings publishes the struct the backend built while it is still
+	// private - so a holder of the old pointer keeps reading a consistent
 	// snapshot instead of a struct changing under it. That is what lets
 	// showForecast copy the fields it needs and let go of the lock before it calls
 	// into a backend that may block for as long as the panel is open.
@@ -44,15 +42,6 @@ type app struct {
 	cfgMu sync.Mutex
 	cfg   *config.Config
 
-	// pinned mirrors cfg.ForecastPinned. The panel asks for the dismissal policy
-	// on every Escape and every focus change, from the thread that owns the
-	// windows, so that read must never block on a lock a background goroutine
-	// happens to hold and must never race with the settings window replacing
-	// cfg. Update the mirror wherever cfg changes; do not "simplify" it into a
-	// direct cfg.ForecastPinned read from the callback - that read is the data
-	// race this field exists to remove.
-	pinned atomic.Bool
-
 	lang     i18n.Lang
 	lastData *weather.WeatherData
 
@@ -63,9 +52,7 @@ type app struct {
 }
 
 func newApp(cfg *config.Config) *app {
-	a := &app{cfg: cfg, lang: i18n.ParseLang(cfg.Language)}
-	a.pinned.Store(cfg.ForecastPinned)
-	return a
+	return &app{cfg: cfg, lang: i18n.ParseLang(cfg.Language)}
 }
 
 func (a *app) ready() {
@@ -168,14 +155,10 @@ func (a *app) showForecast() {
 		Lang:     a.cfg.Language,
 		Theme:    a.cfg.IconTheme,
 		WindUnit: a.cfg.WindUnit,
-		Pinned:   a.pinned.Load,
 		OnMove:   func(x, y int) { a.saveForecastPos(gen, x, y) },
 	}
-	// Both position decisions belong here rather than in the panels, and neither
-	// of them asks whether the panel is pinned. The checkbox decides one thing
-	// only - what may dismiss the panel - so a remembered position is handed back
-	// whether it is set or not. The pointer anchor is what happens when there is
-	// nothing to remember yet, not what happens when the box is unticked.
+	// The pointer anchor is what happens when there is nothing remembered yet; a
+	// remembered position is handed back whenever there is one.
 	if a.cfg.ForecastX != nil && a.cfg.ForecastY != nil {
 		req.At = &gui.Point{X: *a.cfg.ForecastX, Y: *a.cfg.ForecastY}
 	}
@@ -193,18 +176,15 @@ func (a *app) showForecast() {
 // arriving here means the position genuinely changed at least once during this
 // showing.
 //
-// It does not consult ForecastPinned. Where the user put the panel is worth
-// remembering either way; the checkbox governs what may dismiss the panel and
-// nothing else.
-//
 // gen is config.Resets() as it stood when the panel opened, and it is the second
 // half of keeping "Delete configuration" deleted. The carry-forward in
 // openSettings covers the config the settings window returns; this covers the
-// panel, which is the other writer and the harder one: a pinned panel stays on
-// screen while the settings window comes and goes, so the user can drag it, then
-// delete the configuration, then close the panel - and without this check the
-// close would write the discarded coordinates back into a file that no longer
-// exists, recreating it.
+// panel, which is the other writer and the harder one: the panel stays on
+// screen until it is closed deliberately, so the settings window can come and
+// go while it is still open - the user can drag it, then delete the
+// configuration, then close the panel - and without this check the close would
+// write the discarded coordinates back into a file that no longer exists,
+// recreating it.
 func (a *app) saveForecastPos(gen uint64, x, y int) {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
@@ -283,11 +263,6 @@ func (a *app) openSettings() {
 			}
 		}
 		a.cfg = nc
-		// The mirror is stored under the same lock that installs the config, not
-		// after releasing it. In the gap it would otherwise leave, a.cfg is new
-		// while the mirror still answers for the old one, and a panel opened in
-		// that gap gets the wrong dismissal policy for its whole lifetime.
-		a.pinned.Store(nc.ForecastPinned)
 		if stale {
 			if err := nc.Save(); err != nil {
 				log.Printf("tray: could not save carried-forward forecast position: %v", err)

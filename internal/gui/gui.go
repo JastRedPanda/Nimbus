@@ -45,16 +45,6 @@ type Forecast struct {
 	Theme    string // "auto" | "dark" | "light"
 	WindUnit string // "ms" | "kmh"
 
-	// Pinned reports the dismissal policy - Escape and focus loss are ignored
-	// while it is true - and is a function rather than a bool so that the panel
-	// asks again at the moment of each event. A bool captured when the panel
-	// opened would mean unchecking the box in settings only took effect on the
-	// next panel, not on the one the user is looking at.
-	//
-	// May be nil, and nil means not pinned: the behaviour before the option
-	// existed.
-	Pinned func() bool
-
 	// At is where to put the panel. nil means anchor it at the corner nearest
 	// the pointer, which is what a panel the user has never moved does - see
 	// OnMove for what "moved" has to mean before a position is remembered at all.
@@ -76,8 +66,10 @@ type Forecast struct {
 	// remembered position" as "anchor near the pointer" would lose pointer
 	// anchoring forever after one glance at the forecast. Without the position
 	// comparison, a bare click on the panel body would do the same, because a click
-	// is handed to the move loop exactly like a drag - as is a drag the user
-	// cancels with Escape, which the window manager undoes.
+	// is handed to the move loop exactly like a drag - as is a drag cancelled with
+	// Escape, which several window managers undo as part of their own interactive-
+	// move gesture and will keep undoing regardless of whether the application
+	// itself is listening for the key.
 	//
 	// Backends read BOTH positions through the same call - gtk_window_get_position
 	// on GTK, GetWindowRect on Win32 - and never compare against the placement they

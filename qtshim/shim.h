@@ -30,7 +30,7 @@ extern "C" {
 // two integers whose meaning depends on the code, spelled out per code below;
 // anything that has to carry TEXT goes through the separate field callback,
 // because a C string does not fit in a long long.
-#define NIMBUS_QT_EV_CLOSED 1 // the forecast panel is gone. a=1 if focus loss did it
+#define NIMBUS_QT_EV_CLOSED 1 // the forecast panel is gone. no arguments
 #define NIMBUS_QT_EV_MOVED 2  // the panel's final position. a,b = x,y
 #define NIMBUS_QT_EV_ACTION 3 // the settings form is done. a = NIMBUS_QT_ACTION_*
 #define NIMBUS_QT_EV_SEARCH 4 // a text field's own button was pressed. a = its key
@@ -132,14 +132,13 @@ void nimbus_qt_forecast_row(const char *day, const char *symbol, const char *tem
 // remembered position in x,y; without it the panel is anchored at the work-area
 // corner nearest the pointer.
 //
-// pinned is asked at the moment of each dismissal rather than read once, so that
-// unticking the box in settings frees the panel already on screen. It has to
-// answer without blocking - it is called on the Qt thread.
+// Nothing is asked about how the panel should be dismissed, because there is
+// nothing to ask: it stays until the title bar's close button or a tray click
+// takes it away. Neither Escape nor losing the focus touches it.
 //
 // event reports what happened to the panel; see NIMBUS_QT_EV_* above. id is
-// echoed back to both callbacks untouched.
+// echoed back with every event untouched.
 void nimbus_qt_forecast_show(unsigned long long id, int have_at, int x, int y,
-                             int (*pinned)(unsigned long long),
                              void (*event)(unsigned long long, long long, long long, long long));
 
 // nimbus_qt_forecast_close dismisses the panel if one is up, reporting its

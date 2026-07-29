@@ -4,7 +4,6 @@ package qt
 
 import (
 	"log"
-	"time"
 
 	"github.com/JastRedPanda/Nimbus/internal/fonts"
 	"github.com/JastRedPanda/Nimbus/internal/gui"
@@ -17,26 +16,15 @@ import (
 // What is in THIS file is the part that is the same on every backend: fetch off
 // the loop, format the columns, decide whether the click was an opening one or a
 // closing one, and remember where the panel was left. The window itself - the
-// table, the drag, the dismissal policy, the placement - is in qtshim/shim.cpp,
-// because that is the half that has to be written in C++.
+// table, the drag, the placement - is in qtshim/shim.cpp, because that is the
+// half that has to be written in C++.
 //
 // The division is not arbitrary. Everything that could be decided in Go IS
 // decided in Go: the strings come from internal/i18n, the numbers from
 // weather.TempRange and its two siblings, the symbol from internal/fonts, the
 // remembered position from the configuration. The shim is handed finished text.
 
-const (
-	appName = "Nimbus"
-
-	// toggleGrace is how long after the panel closed itself a tray click still
-	// counts as the click that closed it, rather than a fresh request to open.
-	//
-	// Clicking the tray icon can take focus away from the panel, and the panel
-	// closes on focus loss, so the close can land BEFORE the host delivers the
-	// click. Without this the second click would reopen the panel instead of
-	// dismissing it.
-	toggleGrace = 400 * time.Millisecond
-)
+const appName = "Nimbus"
 
 // colAlign is the horizontal alignment of each table column, applied to both the
 // header caption and the cells under it so a column reads as one thing. Day
@@ -46,13 +34,9 @@ const (
 // it is the same table.
 var colAlign = [...]int32{alignStart, alignCenter, alignEnd, alignEnd, alignEnd}
 
-// Read and written only on the Qt thread. panelClosedAt is when the panel last
-// went away by losing focus, which the tray toggle needs to tell a closing click
-// from an opening one; panelUp says one is on screen right now.
-var (
-	panelUp       bool
-	panelClosedAt time.Time
-)
+// panelUp says a panel is on screen right now. Read and written only on the Qt
+// thread.
+var panelUp bool
 
 // Forecast opens the panel, or closes the one that is up. It returns
 // immediately: the forecast is fetched on its own goroutine because the caller
@@ -64,19 +48,7 @@ func (backend) Forecast(req gui.Forecast) {
 	// seconds. A toggle that closed the panel only once the network answered
 	// would be no toggle at all.
 	consumed := make(chan bool, 1)
-	if !invoke(func() {
-		if qtPanelClose() != 0 {
-			consumed <- true
-			return
-		}
-		if !panelClosedAt.IsZero() && time.Since(panelClosedAt) < toggleGrace {
-			// Worth a line: to the user this click did nothing at all.
-			log.Print("qt: forecast click within the toggle grace period, treated as the closing click")
-			consumed <- true
-			return
-		}
-		consumed <- false
-	}) {
+	if !invoke(func() { consumed <- qtPanelClose() != 0 }) {
 		return
 	}
 
@@ -99,8 +71,8 @@ func (backend) Forecast(req gui.Forecast) {
 	}()
 }
 
-// buildPanel hands the shim a finished table and the two callbacks the window
-// answers through. Qt thread only.
+// buildPanel hands the shim a finished table and the callback the window answers
+// through. Qt thread only.
 func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 	if panelUp {
 		// Two clicks inside one fetch: the first had not drawn anything yet when
@@ -116,11 +88,6 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 
 	var id uint64
 	id = register(&window{
-		// Asked at the moment of each event rather than read once here: the tray
-		// hands over a function precisely so that unticking the box in settings
-		// frees the panel already on screen instead of only the next one. A nil
-		// Pinned means not pinned, the behaviour before the option existed.
-		pinned: func() bool { return req.Pinned != nil && req.Pinned() },
 		event: func(code, a, b int64) {
 			switch code {
 			case evMoved:
@@ -136,9 +103,6 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 				go onMove(int(a), int(b))
 			case evClosed:
 				panelUp = false
-				if a == 1 {
-					panelClosedAt = time.Now()
-				}
 				drop(id)
 			}
 		},
@@ -167,6 +131,6 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 	if req.At != nil {
 		have, x, y = 1, int32(req.At.X), int32(req.At.Y)
 	}
-	qtPanelShow(id, have, x, y, pinnedTramp, eventTramp)
+	qtPanelShow(id, have, x, y, eventTramp)
 	panelUp = true
 }

@@ -70,7 +70,7 @@ var (
 	qtPanelBegin  func(string)
 	qtPanelHeader func(string, int32)
 	qtPanelRow    func(string, string, string, string, string)
-	qtPanelShow   func(uint64, int32, int32, int32, uintptr, uintptr)
+	qtPanelShow   func(uint64, int32, int32, int32, uintptr)
 	qtPanelClose  func() int32
 
 	qtFormBegin     func(string)
@@ -275,7 +275,7 @@ func invoke(fn func()) bool {
 	return true
 }
 
-// The windows the shim can call back into, and the three trampolines it calls
+// The windows the shim can call back into, and the two trampolines it calls
 // them through.
 //
 // Every window gets an id when it is built and hands it to the shim, which
@@ -291,12 +291,10 @@ func invoke(fn func()) bool {
 // reason the GTK binding's is - the cost is nothing and the alternative is a
 // data race waiting for the day something calls in from elsewhere.
 type window struct {
-	// event handles NIMBUS_QT_EV_*, field carries the one thing that does not fit
-	// in an integer, and pinned answers the dismissal policy at the moment it is
-	// asked. Any of them may be nil for a window that has no use for it.
-	event  func(code, a, b int64)
-	field  func(key int64, value string)
-	pinned func() bool
+	// event handles NIMBUS_QT_EV_*, and field carries the one thing that does not
+	// fit in an integer. Either may be nil for a window that has no use for it.
+	event func(code, a, b int64)
+	field func(key int64, value string)
 }
 
 var (
@@ -307,7 +305,6 @@ var (
 	winTrampOnce sync.Once
 	eventTramp   uintptr
 	fieldTramp   uintptr
-	pinnedTramp  uintptr
 )
 
 func lookup(id uint64) *window {
@@ -316,10 +313,10 @@ func lookup(id uint64) *window {
 	return windows[id]
 }
 
-// register hands back the id and the three trampolines, binding them on first
-// use. Three more callbacks and no more, however many windows are opened, for
-// the same reason invoke has exactly one: purego's callback budget is fixed for
-// the life of the process and nothing is ever reclaimed.
+// register hands back the id and the two trampolines, binding them on first
+// use. Two more callbacks and no more, however many windows are opened, for the
+// same reason invoke has exactly one: purego's callback budget is fixed for the
+// life of the process and nothing is ever reclaimed.
 func register(w *window) uint64 {
 	winTrampOnce.Do(func() {
 		eventTramp = purego.NewCallback(func(id uint64, code, a, b int64) {
@@ -331,12 +328,6 @@ func register(w *window) uint64 {
 			if win := lookup(id); win != nil && win.field != nil {
 				win.field(key, goString(value))
 			}
-		})
-		pinnedTramp = purego.NewCallback(func(id uint64) int32 {
-			if win := lookup(id); win != nil && win.pinned != nil && win.pinned() {
-				return 1
-			}
-			return 0
 		})
 	})
 	winMu.Lock()

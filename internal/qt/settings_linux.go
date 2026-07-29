@@ -40,7 +40,6 @@ const (
 	keyTheme
 	keyLang
 	keyScale
-	keyPinned
 	keyInterval
 )
 
@@ -199,8 +198,6 @@ func buildForm(cfg *config.Config, onFontScale func(int), result chan<- *config.
 
 	qtFormSlider(keyScale, l.FontScaleGroup(), 1, 100, int32(cfg.FontScale))
 
-	check(keyPinned, l.PinForecast(), cfg.ForecastPinned)
-
 	combo(keyInterval, l.UpdateInterval(), config.IntervalLabels(),
 		config.IntervalIndex(cfg.UpdateInterval))
 
@@ -221,8 +218,6 @@ func combo(key int32, label string, options []string, active int) {
 		qtFormOption(o, b2i(i == active))
 	}
 }
-
-func check(key int32, label string, on bool) { qtFormCheck(key, label, b2i(on)) }
 
 func b2i(b bool) int32 {
 	if b {
@@ -263,9 +258,6 @@ func adopt(cfg *config.Config, values map[int64]string, action int) *config.Conf
 		nc.Language = choose(values[keyLang], cfg.Language, langValues)
 		if v, err := strconv.Atoi(values[keyScale]); err == nil {
 			nc.FontScale = v
-		}
-		if v, ok := values[keyPinned]; ok {
-			nc.ForecastPinned = v == "1"
 		}
 		if v, err := strconv.Atoi(values[keyInterval]); err == nil && v >= 0 && v < len(config.Intervals) {
 			nc.UpdateInterval = config.Intervals[v].Minutes

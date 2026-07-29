@@ -53,12 +53,6 @@ const (
 	buttonPressMask = 1 << 8 // GDK_BUTTON_PRESS_MASK
 	primaryButton   = 1      // GDK_BUTTON_PRIMARY
 
-	// GdkModifierType. The same number as GDK_BUTTON_PRESS_MASK above and a
-	// different enumeration entirely: this one appears in the modifier mask
-	// gdk_window_get_device_position writes, where it means the primary button
-	// is physically down at this instant - see PrimaryButtonHeld.
-	button1Mask = 1 << 8 // GDK_BUTTON1_MASK
-
 	dialogModal       = 1 // GTK_DIALOG_MODAL
 	dialogDestroyWith = 2 // GTK_DIALOG_DESTROY_WITH_PARENT
 	messageError      = 3 // GTK_MESSAGE_ERROR
@@ -200,26 +194,17 @@ var (
 	widgetSensitive  func(uintptr, int32)
 	containerChild   func(uintptr) uintptr
 
-	// The draggable, pinnable panel: a press on the window body starts a window
-	// manager move, and the position it ends up at is read back so it can be
-	// remembered. Unlike everything above, these are bound with bindOptional and
-	// are nil on a GTK that does not export them, so every caller MUST nil-check
-	// them - see DragOnPress, Position and NewCheck.
+	// The draggable panel: a press on the window body starts a window manager
+	// move, and the position it ends up at is read back so it can be remembered.
+	// Unlike everything above, these are bound with bindOptional and are nil on a
+	// GTK that does not export them, so every caller MUST nil-check them - see
+	// DragOnPress and Position.
 	widgetAddEvents func(uintptr, int32)
 	windowMoveDrag  func(uintptr, int32, int32, int32, uint32)
 	eventButton     func(uintptr, *uint32) int32
 	eventRoot       func(uintptr, *float64, *float64) int32
 	eventTime       func(uintptr) uint32
 	windowGetPos    func(uintptr, *int32, *int32)
-	checkNewLabel   func(string) uintptr
-
-	// The other half of the draggable panel: whether the primary button is still
-	// held, which is the only honest answer to "is the window manager still
-	// moving this window" - GTK emits no signal for the end of a move. Bound
-	// optionally and nil-checked in PrimaryButtonHeld, which reports "cannot
-	// tell" when either is missing.
-	screenRootWindow func(uintptr) uintptr
-	windowDevicePos  func(uintptr, uintptr, *int32, *int32, *uint32) uintptr
 )
 
 var (
@@ -366,9 +351,9 @@ func load() {
 	purego.RegisterLibFunc(&widgetSensitive, gtk, "gtk_widget_set_sensitive")
 	purego.RegisterLibFunc(&containerChild, gtk, "gtk_container_get_children")
 
-	// The pinned-panel bindings. Every one of them has existed since GTK 2, so a
-	// library missing one is not a case anyone expects to meet - but the cost of
-	// surviving it is a nil check at three call sites, and the cost of not
+	// The draggable-panel bindings. Every one of them has existed since GTK 2, so
+	// a library missing one is not a case anyone expects to meet - but the cost of
+	// surviving it is a nil check at two call sites, and the cost of not
 	// surviving it is the entire GTK UI falling back to the browser over a panel
 	// that cannot be dragged. bindOptional is what buys that, so these do not go
 	// through RegisterLibFunc.
@@ -378,9 +363,6 @@ func load() {
 	bindOptional(&eventRoot, gtk, "gdk_event_get_root_coords")
 	bindOptional(&eventTime, gtk, "gdk_event_get_time")
 	bindOptional(&windowGetPos, gtk, "gtk_window_get_position")
-	bindOptional(&checkNewLabel, gtk, "gtk_check_button_new_with_label")
-	bindOptional(&screenRootWindow, gtk, "gdk_screen_get_root_window")
-	bindOptional(&windowDevicePos, gtk, "gdk_window_get_device_position")
 
 	// These three live in libgdk-3.so.0 and libcairo.so.2, not in libgtk-3, and
 	// are still resolved through the libgtk-3 handle: dlsym searches the
@@ -453,8 +435,8 @@ func load() {
 // The failure is logged because nothing else can report it. The symbol name is a
 // string literal, so a typo in one is invisible to the compiler, to go vet and to
 // every test - the func var is simply nil and the feature quietly is not there.
-// The loudest case is not the drag: NewCheck returns Check(0), and the settings
-// window then cannot change ForecastPinned at all, for anyone, forever, with no
+// The quietest case is gtk_window_get_position: nothing visibly breaks, the panel
+// simply stops remembering where it was dragged to, for anyone, forever, with no
 // error anywhere. A line on stderr is what turns that into something a bug report
 // can carry.
 //
@@ -520,7 +502,7 @@ func dispatchVoid(_ uintptr, id uintptr) {
 }
 
 // dispatchEvent serves every gboolean(GtkWidget*, GdkEvent*, gpointer) signal -
-// key-press-event, focus-out-event and any other - through one trampoline, so
+// key-press-event, delete-event and any other - through one trampoline, so
 // the process-wide NewCallback budget stays at three no matter how many windows
 // are opened over a session.
 func dispatchEvent(_ uintptr, event uintptr, id uintptr) int32 {
@@ -545,17 +527,17 @@ func Invoke(fn func()) error {
 }
 
 // After runs fn on the GTK main loop once, no sooner than d from now. It is how
-// a caller asks GDK something again in a moment - see PrimaryButtonHeld, whose
-// caller has to keep asking because GTK emits no signal for the end of a window
-// manager move.
+// a caller puts work off by a moment: the forecast panel waits for the window
+// manager to settle a freshly mapped window before reading its position, and the
+// settings window coalesces a slider drag into one tray-icon regeneration.
 //
 // It costs no new trampoline, which is the whole reason it is g_timeout_add and
 // not a goroutine that sleeps and calls Invoke: g_timeout_add takes the same
 // GSourceFunc as g_idle_add, and dispatchIdle already returns G_SOURCE_REMOVE,
 // so the source removes itself after its single call. The fixed callback budget
 // stays at three. A timeout also sits at G_PRIORITY_DEFAULT rather than
-// G_PRIORITY_DEFAULT_IDLE, so a busy event stream - a drag, which is exactly the
-// case this serves - cannot defer it indefinitely.
+// G_PRIORITY_DEFAULT_IDLE, so a busy event stream - a slider drag, which is
+// exactly the case this serves - cannot defer it indefinitely.
 //
 // Timing is best effort, like every GLib timeout: it runs no earlier than d and
 // later if the loop is busy, so callers must treat it as "ask again soon" and
@@ -616,9 +598,9 @@ func ConnectScoped(obj uintptr, signal string, fn func()) {
 // ConnectEventScoped is ConnectEvent for a handler that should not outlive the
 // widget it is attached to. It is what every window-level event handler here uses,
 // because a window is the most frequently created widget in this program: the
-// forecast panel is opened and closed all session, and each opening used to leave
-// its Escape, focus-in, focus-out and button-press closures in eventFns for the
-// life of the process, along with everything those closures captured.
+// forecast panel is opened and closed all session, and each opening registers a
+// delete-event and a button-press closure that would otherwise sit in eventFns
+// for the life of the process, along with everything those closures captured.
 //
 // Like ConnectScoped it costs no extra trampoline: the release is a ConnectOnce on
 // "destroy", which deletes its own entry when it fires. Prefer plain ConnectEvent
@@ -1140,9 +1122,9 @@ func ConnectEvent(obj uintptr, signal string, fn func(event uintptr) bool) {
 // stores the value and applies it when the GdkWindow is created; the order
 // therefore carries no meaning.
 //
-// The caller owns dismissal, and with a frame that means OnDeleteEvent as well as
-// OnEscape and OnFocusOut: the frame's close button reaches none of the others,
-// and left to itself it reports nothing.
+// The caller owns dismissal, and with a frame that means OnDeleteEvent: the
+// frame's close button is the panel's own way out, and left to itself GTK
+// destroys the window without the caller ever hearing about it.
 func NewFramedPanel(title string, w, h int) Window {
 	win := windowNew(WindowToplevel)
 	windowTitle(win, title) // the WM uses it for alt-tab, and for the title bar
@@ -1155,8 +1137,10 @@ func NewFramedPanel(title string, w, h int) Window {
 	return Window(win)
 }
 
-// OnEscape closes the window when Escape is pressed. It is the dismissal path
-// that always works, whatever the window manager does with focus.
+// OnEscape closes the window when Escape is pressed, which is how the settings
+// and About windows are dismissed from the keyboard. The forecast panel
+// deliberately does not use it: that panel closes only from its title bar and
+// from the tray icon.
 func (w Window) OnEscape(fn func()) {
 	ConnectEventScoped(uintptr(w), "key-press-event", func(event uintptr) bool {
 		var keyval uint32
@@ -1179,7 +1163,8 @@ func (w Window) OnEscape(fn func()) {
 //
 // The handler returns TRUE, which stops that default destroy. fn therefore owns
 // destroying the window: an fn that does not is a window whose close button does
-// nothing. Hand it the same dismissal OnEscape gets and every exit reports alike.
+// nothing. Hand it the same dismissal the tray toggle calls and both exits report
+// alike.
 //
 // Scoped to the window like every other window-level handler here, because the
 // panel is opened and closed all session and an unscoped registration would leave
@@ -1188,28 +1173,6 @@ func (w Window) OnDeleteEvent(fn func()) {
 	ConnectEventScoped(uintptr(w), "delete-event", func(uintptr) bool {
 		fn()
 		return true
-	})
-}
-
-// OnFocusIn runs fn when the window gains focus. A panel uses it to decide that
-// a later focus LOSS is genuine: a window is not guaranteed to be given focus
-// when it is mapped, so a focus-out can arrive before the window was ever
-// focused at all.
-func (w Window) OnFocusIn(fn func()) {
-	ConnectEventScoped(uintptr(w), "focus-in-event", func(uintptr) bool {
-		fn()
-		return false
-	})
-}
-
-// OnFocusOut runs fn when the window loses focus, which is how a panel gets
-// dismissed by clicking elsewhere. It fires for any window that takes focus,
-// including another of this application's own, so it is a convenience on top of
-// OnEscape rather than the only way out.
-func (w Window) OnFocusOut(fn func()) {
-	ConnectEventScoped(uintptr(w), "focus-out-event", func(uintptr) bool {
-		fn()
-		return false
 	})
 }
 
@@ -1232,25 +1195,22 @@ func (w Window) Size() (int, int) {
 // way to position its own toplevel, and the call is silently ignored there.
 func (w Window) Move(x, y int) { windowMove(uintptr(w), int32(x), int32(y)) }
 
-// gbutton, groot, gpos, gdevXY and gmask are scratch out-parameters for the
-// accessors that write through a pointer instead of returning:
-// gdk_event_get_button takes a guint*, gdk_event_get_root_coords two gdouble*,
-// gtk_window_get_position two gint*, gdk_window_get_device_position two gint*
-// and a GdkModifierType*. They live at package scope for the same reason gvalue
-// does - a Go stack moves when it grows, and a pointer into one is not an
-// address to hand to C - and each call gets its own so no accessor can scribble
-// over a value another is still reading. Only the GTK thread touches them.
+// gbutton, groot and gpos are scratch out-parameters for the accessors that
+// write through a pointer instead of returning: gdk_event_get_button takes a
+// guint*, gdk_event_get_root_coords two gdouble* and gtk_window_get_position two
+// gint*. They live at package scope for the same reason gvalue does - a Go stack
+// moves when it grows, and a pointer into one is not an address to hand to C -
+// and each call gets its own so no accessor can scribble over a value another is
+// still reading. Only the GTK thread touches them.
 var (
 	gbutton uint32
 	groot   [2]float64
 	gpos    [2]int32
-	gdevXY  [2]int32
-	gmask   uint32
 )
 
 // DragOnPress makes a press anywhere on the window body start a window manager
 // move, so the panel can be dragged by its content and not only by the title bar
-// the manager draws. It works whether or not the panel is pinned.
+// the manager draws.
 //
 // gtk_widget_add_events is load-bearing: a GtkWindow does not ask GDK for button
 // presses, so without GDK_BUTTON_PRESS_MASK the handler is connected and then
@@ -1310,8 +1270,9 @@ func (w Window) DragOnPress(started func()) {
 		// _gdk_x11_moveresize_handle_event in the ordinary event dispatch.
 		// Neither waits for the drop, so this handler returns and the main loop
 		// keeps dispatching for the whole move. An earlier version of this
-		// comment claimed the opposite; forecast_linux.go depends on the truth,
-		// since a call that blocked would make its mid-move deferral pointless.
+		// comment claimed the opposite, which is worth denying in writing: a call
+		// that blocked would leave the panel deaf to the tray icon and to the
+		// window manager for as long as the user held it.
 		if started != nil {
 			started()
 		}
@@ -1379,9 +1340,8 @@ func NewButton(label string, fn func()) uintptr {
 }
 
 // pointerDevice resolves the default seat's pointer, or 0 when any link in the
-// chain is missing. Written once because both pointer questions this package
-// answers - where it is and which buttons it holds - have to walk the same
-// display, seat, device chain first.
+// chain is missing. It is a function of its own because the walk is three calls
+// that can each answer nothing, and its caller has enough to say without them.
 func pointerDevice() uintptr {
 	display := displayDefault()
 	if display == 0 {
@@ -1406,54 +1366,6 @@ func PointerPosition() (x, y int, ok bool) {
 	var px, py int32
 	devicePosition(pointer, &screen, &px, &py)
 	return int(px), int(py), true
-}
-
-// PrimaryButtonHeld reports whether the pointer's primary button is physically
-// down at this instant, and whether the question could be answered at all.
-//
-// It exists because GTK has no signal for the end of a window manager move. The
-// panel hands a press to the manager with gtk_window_begin_move_drag and is then
-// told nothing further: the button release goes to whoever holds the pointer
-// grab for the move, which is the window manager on the EWMH path and GDK's own
-// hidden helper window on the emulated one, and never the panel's toplevel. The
-// button state is the one fact about the move that can still be read, and it can
-// be read at any moment rather than waited for.
-//
-// ok=false MUST be read as "assume it is not held". A caller that suppresses
-// behaviour while the button is down has to fall back to not suppressing it,
-// because the alternative - assuming a drag is in progress because GDK would not
-// say - is a window that can never be dismissed.
-//
-// The mask is asked of the ROOT window rather than of the panel: the root always
-// exists, needs no realise, and is the same rectangle the pointer coordinates
-// are already reported in. gmask is cleared first because a failed query leaves
-// it untouched, and zero is the answer that fails towards "not held".
-//
-// It works during another client's pointer grab, which is the only reason it can
-// serve this purpose: GDK asks the X server (XIQueryPointer, or XQueryPointer on
-// core input), and the server reports the real button state to any client
-// regardless of who holds a grab.
-//
-// Must be called on the GTK thread.
-func PrimaryButtonHeld() (held, ok bool) {
-	if screenRootWindow == nil || windowDevicePos == nil {
-		return false, false
-	}
-	screen := screenDefault()
-	if screen == 0 {
-		return false, false
-	}
-	root := screenRootWindow(screen)
-	if root == 0 {
-		return false, false
-	}
-	pointer := pointerDevice()
-	if pointer == 0 {
-		return false, false
-	}
-	gmask = 0
-	windowDevicePos(root, pointer, &gdevXY[0], &gdevXY[1], &gmask)
-	return gmask&button1Mask != 0, true
 }
 
 // Rect is a GdkRectangle: four ints, in root coordinates.
@@ -1737,30 +1649,6 @@ func (g RadioGroup) SetActive(i int) {
 	}
 	toggleSetActive(g[i], 1)
 }
-
-// Check is a GtkCheckButton: one box that is independently on or off, as opposed
-// to a RadioGroup where setting one member clears another. All methods must be
-// called on the GTK thread.
-type Check uintptr
-
-// NewCheck creates a labelled check box in the given state.
-//
-// A GtkCheckButton is a GtkToggleButton, so its state is read and written with
-// the very gtk_toggle_button_* accessors NewRadioGroup already uses - there is no
-// check-button specific API to bind for it.
-func NewCheck(label string, active bool) Check {
-	if checkNewLabel == nil {
-		return 0
-	}
-	c := checkNewLabel(label)
-	toggleSetActive(c, b2i(active))
-	return Check(c)
-}
-
-// Active reports whether the box is ticked. A Check that could not be created
-// reads as unticked, so a form built without one saves the option off rather than
-// dereferencing a widget that is not there.
-func (c Check) Active() bool { return c != 0 && toggleGetActive(uintptr(c)) != 0 }
 
 // Slider is a GtkScale over an integer range. All methods must be called on the
 // GTK thread.

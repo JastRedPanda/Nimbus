@@ -133,12 +133,6 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 
 	scale := sliderFrame(page, l, cfg.FontScale, onFontScale)
 
-	// Straight into the page, with no frame around it. A titled border holding a
-	// single checkbox is chrome for nothing, and the checkbox's own label is its
-	// title.
-	pin := gtk.NewCheck(l.PinForecast(), cfg.ForecastPinned)
-	gtk.PackStart(page, uintptr(pin), false, false, 0)
-
 	interval := gtk.NewCombo(config.IntervalLabels(), config.IntervalIndex(cfg.UpdateInterval))
 	gtk.PackStart(page, gtk.NewFrame(l.UpdateInterval(), uintptr(interval)), false, false, 0)
 
@@ -153,12 +147,6 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		nc.IconTheme = config.Pick(theme.Active(), "auto", "dark", "light")
 		nc.Language = config.Pick(lang.Active(), "en", "uk")
 		nc.FontScale = scale.Value()
-		// Only when the box was actually built. A Check that could not be
-		// created reads as unticked, and writing that would turn off an option
-		// the user was never shown; nc carries the stored value forward instead.
-		if pin != 0 {
-			nc.ForecastPinned = pin.Active()
-		}
 		if i := interval.Active(); i >= 0 && i < len(config.Intervals) {
 			nc.UpdateInterval = config.Intervals[i].Minutes
 		}
@@ -303,8 +291,9 @@ func sliderFrame(page uintptr, l i18n.Lang, value int, onFontScale func(int)) gt
 	// cheap or coalesce, and the Win32 twin already ignores SB_THUMBTRACK.
 	//
 	// So the preview is coalesced: the newest value is remembered and one settler is
-	// armed, exactly the armSettle idiom forecast_linux.go uses. All of this runs on
-	// the GTK thread, so the two variables need no lock.
+	// armed, and every value that arrives while it is armed only updates what the
+	// settler will use. All of this runs on the GTK thread, so the two variables
+	// need no lock.
 	pending, settling := value, false
 	slider.OnChange(func(v int) {
 		gtk.SetLabel(readout, fmt.Sprintf("%d%%", v))

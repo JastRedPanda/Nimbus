@@ -64,44 +64,8 @@ func TestConfigDirIsRedirected(t *testing.T) {
 
 func TestDefaultForecastPanel(t *testing.T) {
 	cfg := Default()
-	if !cfg.ForecastPinned {
-		t.Error("Default().ForecastPinned = false, want true")
-	}
 	if cfg.ForecastX != nil || cfg.ForecastY != nil {
 		t.Errorf("Default() position = (%v, %v), want (nil, nil)", cfg.ForecastX, cfg.ForecastY)
-	}
-}
-
-// TestForecastPinnedFalseRoundTrip is the regression test for the omitempty
-// trap: with omitempty on the tag, false is dropped from the file and Load
-// returns the true from Default(), so unchecking the box never sticks.
-func TestForecastPinnedFalseRoundTrip(t *testing.T) {
-	redirectConfigDir(t)
-
-	cfg := Default()
-	cfg.ForecastPinned = false
-	if err := cfg.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	path, err := configPath()
-	if err != nil {
-		t.Fatalf("configPath: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if !strings.Contains(string(data), `"forecast_pinned"`) {
-		t.Errorf("saved config has no forecast_pinned key, so false cannot survive Load:\n%s", data)
-	}
-
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.ForecastPinned {
-		t.Error("ForecastPinned = true after saving false")
 	}
 }
 
@@ -125,9 +89,6 @@ func TestLoadConfigWithoutForecastKeys(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.ForecastPinned {
-		t.Error("ForecastPinned = false for a config that predates the field, want the true from Default()")
 	}
 	if cfg.ForecastX != nil || cfg.ForecastY != nil {
 		t.Errorf("position = (%v, %v) for a config that predates the field, want (nil, nil)", cfg.ForecastX, cfg.ForecastY)
@@ -159,8 +120,8 @@ func TestForecastPositionRoundTrip(t *testing.T) {
 }
 
 // TestSaveIsAtomic covers what the rename in Save is for. Two writers exist now
-// - a Save click and a pinned panel close from a detached goroutine - and a
-// truncated config file makes main.go log.Fatalf, so the app stops starting.
+// - a Save click and the forecast panel closing from a detached goroutine - and
+// a truncated config file makes main.go log.Fatalf, so the app stops starting.
 //
 // The temp-file assertion is the part that would catch a rewrite that forgets to
 // rename or to clean up: a leftover config.json.tmp* is invisible to Load and so

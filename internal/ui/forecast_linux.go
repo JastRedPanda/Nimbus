@@ -21,9 +21,10 @@ import (
 // was tried and reverted. The CHROME around it is the panel work and stays: off
 // the taskbar and the pager, above other windows, sticky across workspaces,
 // draggable by its body, placed where the user last dragged it or else at the
-// work-area corner nearest the click, and dismissed by Escape, by focus loss, or
-// by the title bar's close button - the first two only while the panel is not
-// pinned, and neither of them while the window manager is moving the panel.
+// work-area corner nearest the click, and closed only deliberately: by the title
+// bar's close button, or by the tray icon, which toggles it. Escape does not
+// close it and neither does losing the focus - this is a window that stays where
+// it was put until it is dismissed.
 //
 // The panel is an ordinary application window rather than a sheet floating over
 // the desktop: the window manager's frame and title bar, opaque, square, and
@@ -61,27 +62,11 @@ const (
 	panelMargin = 12
 )
 
-// How the settler for a suppressed dismissal is paced - see settleDrag in
-// buildForecast.
-//
-// dragPoll is how often it re-asks GDK whether the primary button is still down.
-// Fast enough that the panel closes as the user lets go rather than visibly
-// after, slow enough that even a long drag costs ten pointer queries a second
-// and nothing else.
-//
-// dragSettleMax is how long it keeps asking before acting anyway. It is
-// deliberately far longer than any drag a person performs, because it is not a
-// time limit on dragging: it is the backstop for a pointer that reports a button
-// as held forever, which is the one way the button state can lie.
-const (
-	dragPoll = 100 * time.Millisecond
-	// placeSettle is how long the panel waits before taking the window's position
-	// as the baseline a later title-bar drag is measured against. Long enough for a
-	// window manager to finish placing a window it has just been given, short enough
-	// that a user cannot drag the panel before it elapses.
-	placeSettle   = 400 * time.Millisecond
-	dragSettleMax = 20 * time.Second
-)
+// placeSettle is how long the panel waits before taking the window's position as
+// the baseline a later title-bar drag is measured against. Long enough for a
+// window manager to finish placing a window it has just been given, short enough
+// that a user cannot drag the panel before it elapses.
+const placeSettle = 400 * time.Millisecond
 
 // colAlign is the horizontal alignment of each table column, applied to both the
 // header caption and the cells under it so a column reads as one thing. Day
@@ -96,17 +81,14 @@ var colAlign = [...]int{
 	gtk.AlignEnd,    // Precip
 }
 
-// All three are read and written only on the GTK thread. forecastClosedAt is
-// when the panel last went away on its own, which the tray toggle needs to tell
-// a closing click from an opening one.
+// Both are read and written only on the GTK thread.
 //
 // forecastDismiss is the open panel's own closer rather than a bare Destroy,
 // because the panel's final position has to be read off the window before it is
 // destroyed and only the closure built with the panel knows where to report it.
 var (
-	forecastWindow   gtk.Window
-	forecastClosedAt time.Time
-	forecastDismiss  func()
+	forecastWindow  gtk.Window
+	forecastDismiss func()
 )
 
 // closeOpenPanel makes the tray icon a toggle: if the panel is up, the click
@@ -119,11 +101,6 @@ func closeOpenPanel() bool {
 		} else {
 			forecastWindow.Destroy()
 		}
-		return true
-	}
-	if !forecastClosedAt.IsZero() && time.Since(forecastClosedAt) < toggleGrace {
-		// Worth a line: to the user this click did nothing at all.
-		log.Print("forecast: click within the toggle grace period, treated as the closing click")
 		return true
 	}
 	return false
@@ -207,60 +184,24 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	ensureAppIcon()
 	gtk.LoadCSS(forecastCSS)
 
-	// The mid-move state, declared before the window because the destroy handler
-	// below is one of the things that writes it. All of it is read and written
-	// only on the GTK thread, like the package globals above.
+	// closed says this panel is gone. It is declared before the window because the
+	// destroy handler below is one of the things that writes it, and like the
+	// package globals above it is read and written only on the GTK thread.
 	//
-	// closed makes dismiss idempotent, which the deferral further down requires:
-	// a suppressed dismissal is honoured by a callback that runs arbitrarily
-	// later, and by then the title bar, the tray toggle or the window manager may
-	// already have destroyed this window. A second gtk_widget_destroy on it
-	// would read a GdkWindow that is gone. It is set from the destroy handler as
-	// well as from dismiss, so an exit that never went through dismiss - the
-	// window manager's, or shutdown's - is recorded too.
-	//
-	// dragging says a press on the panel body was handed to the window manager
-	// and the primary button has not been seen up since. It is only half of "a
-	// move is in progress"; inMove is the other half.
-	//
-	// deferred is a focus loss that arrived during a move and has not been
-	// settled. settling says a settler is already armed, so a burst of focus
-	// events arms exactly one. settleBy is when that settler stops waiting for
-	// the button and acts regardless.
-	//
-	// focused is whether the panel holds focus right now. settleDrag re-reads it
-	// instead of trusting the decision it deferred, which is what the
-	// GetForegroundWindow call in forecast_windows.go's settleDrag is for.
-	//
-	// byFocus says this panel is closing because it lost focus, and it is what
-	// arms the tray toggle's grace period. Only that one cause may arm it: the
-	// grace exists solely because a click on the tray icon can take the focus
-	// away and close the panel before the click itself is delivered, so a click
-	// arriving just after such a close is the closing click rather than a new
-	// opening one. Arming it after a deliberate close - the x button, the toggle,
-	// Escape - is what ate twelve consecutive clicks from a user who was tapping
-	// the icon: every tap inside the window was answered by silence.
-	var (
-		closed   bool
-		byFocus  bool
-		dragging bool
-		deferred bool
-		settling bool
-		// armSettle arms the poller below; it is declared here because the drag
-		// handler is built before the poller it needs to start.
-		armSettle func()
-		settleBy  time.Time
-		focused   bool
-	)
+	// It has two jobs. It makes dismiss idempotent, so a second exit cannot read a
+	// position off a window that is no longer there or destroy it twice. And it is
+	// what the placement timer further down asks before touching the window at
+	// all: that timer fires a moment after the panel opens, which is easily long
+	// enough for the user to have closed it again. It is set from the destroy
+	// handler as well as from dismiss, so an exit that never went through
+	// dismiss - the window manager's, or shutdown's - is recorded too.
+	var closed bool
 
 	win := gtk.NewFramedPanel(l.ForecastTitle(), forecastWidth, forecastHeight)
 	win.OnDestroy(func() {
 		closed = true
 		forecastWindow = 0
 		forecastDismiss = nil
-		if byFocus {
-			forecastClosedAt = time.Now()
-		}
 	})
 	gtk.SetName(uintptr(win), forecastWindowID)
 
@@ -293,11 +234,11 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	// Neither half is enough alone. Reporting every close wrote down a corner
 	// nobody chose on the first open-and-close of a user's very first forecast; the
 	// tray reads a stored position as "put it back there", so pointer anchoring
-	// never ran again for that user - permanently, and by default, since
-	// ForecastPinned defaults to on. But the handoff on its own is just as bad,
-	// because a bare click on the panel body IS a handoff: the press goes to the
-	// window manager whether or not the pointer then moves. So is a drag the user
-	// cancels with Escape, which the window manager undoes by putting the window
+	// never ran again for that user - permanently, and for every forecast
+	// afterwards. But the handoff on its own is just as bad, because a bare click
+	// on the panel body IS a handoff: the press goes to the window manager whether
+	// or not the pointer then moves. So is a drag the user cancels with Escape,
+	// which the window manager takes for itself and undoes by putting the window
 	// back - and the position comparison is what makes that report nothing.
 	//
 	// Both positions are read the SAME way, through gtk.Window.Position, and never
@@ -347,14 +288,7 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	// make a drag followed by one idle click report nothing at all. The callback
 	// runs just before gtk_window_begin_move_drag, so this reads the position the
 	// drag starts from.
-	// dragging is set on EVERY press, unlike origin: it says a move is starting
-	// now, not that one ever started, and the second and later presses of a
-	// showing are moves just as much as the first.
 	win.DragOnPress(func() {
-		dragging = true
-		// Watch for the button coming up. Nothing else can tell the latch the
-		// move is over - see inMove.
-		armSettle()
 		if handedOff {
 			return
 		}
@@ -362,18 +296,17 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		handedOff, origin = true, gui.Point{X: x, Y: y}
 	})
 
-	// dismiss is the panel's single exit: the title bar's close button, Escape,
-	// focus loss and the tray toggle all close it through here, which is the only
-	// reason the position gets reported at all.
+	// dismiss is the panel's single exit: the title bar's close button and the
+	// tray toggle both close it through here, which is the only reason the
+	// position gets reported at all.
 	//
 	// The order inside it is the whole point. The position has to be read while
 	// the window still exists: gtk_widget_destroy takes the GdkWindow with it, and
 	// gtk.Window.Position on what is left answers with garbage. That is why the
-	// read cannot live in the destroy handler above, where forecastClosedAt is
-	// set - by the time that runs there is nothing left to ask. A destroy that
-	// arrives from outside this file, from the window manager or at shutdown,
-	// therefore reports no move, which is correct: an unread position is better
-	// than a wrong one.
+	// read cannot live in the destroy handler above - by the time that runs there
+	// is nothing left to ask. A destroy that arrives from outside this file, from
+	// the window manager or at shutdown, therefore reports no move, which is
+	// correct: an unread position is better than a wrong one.
 	//
 	// The coordinates reported are the ones read HERE, at close, not the origin
 	// recorded at the handoff: the origin exists only to be compared against.
@@ -387,10 +320,10 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	// arbitrary goroutine, coordinates already read, free to take locks and do
 	// I/O.
 	//
-	// The guard on the front is not decoration. settleDrag can call this a moment
-	// after the panel was closed by something else entirely, and a re-entrant
-	// dismissal would read Position off a destroyed window - garbage - and then
-	// report it as a position the user chose, or destroy the window twice.
+	// The guard on the front is what makes it idempotent, and that is not
+	// decoration: a second pass would read Position off a destroyed window -
+	// garbage - and then report it as a position the user chose, or destroy the
+	// window twice.
 	dismiss := func() {
 		if closed {
 			return
@@ -405,219 +338,12 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		win.Destroy()
 	}
 
-	// pinned is asked at the moment of each event rather than read once here.
-	// The tray hands over a function precisely so that unticking the box in
-	// settings frees the panel already on screen instead of only the next one.
-	// A nil Pinned means not pinned - the behaviour before the option existed.
-	pinned := func() bool { return req.Pinned != nil && req.Pinned() }
-
-	// inMove reports whether the window manager is moving the panel right now.
-	//
-	// This is where this file stopped differing from the Win32 panel on purpose.
-	// Both backends now promise the same thing - a move in progress suspends
-	// dismissal - and they promise it for different reasons. On Win32 the move
-	// loop runs ON the UI thread and the window would be destroyed from inside
-	// itself. Here nothing is re-entrant: gtk_window_begin_move_drag sends the
-	// manager one ClientMessage and returns, the main loop keeps dispatching, and
-	// Marco ends its own grab on our DestroyNotify. What was left was purely the
-	// user's experience - an unpinned panel vanishing out from under the pointer,
-	// mid-drag, because something else took the focus - and the note that used to
-	// stand here, calling that "the unpinned contract anyway", was the wrong call.
-	// A window the user is holding is a window the user is using.
-	//
-	// HOW THE END OF THE MOVE IS DECIDED, which is the whole design problem
-	// because GTK emits no signal for it: GDK is asked whether the primary button
-	// is still physically down, at the moment each dismissal arrives. There is no
-	// latched "the manager is moving me" flag to get stuck and no timer guessing
-	// how long a drag lasts.
-	//
-	// Every alternative is worse. button-release-event never arrives here at all:
-	// the release goes to whoever holds the pointer grab for the move, which is
-	// the window manager on the EWMH path and GDK's own hidden helper window on
-	// the emulated one, never this toplevel. focus-in as the end-of-move signal
-	// only fires when the focus comes BACK, which is precisely the case where
-	// nothing needed deferring. Watching configure-event stop arriving, or arming
-	// a fixed timer, is a guess that either expires while the user is still
-	// holding the panel or leaves it immune long after they let go.
-	//
-	// AN ABNORMALLY ENDED DRAG CANNOT LEAVE THE PANEL IMMUNE TO DISMISSAL, which
-	// would be a worse bug than the one being fixed. Immunity is not state that
-	// something has to remember to clear; it is recomputed from the pointer at
-	// every dismissal and lasts exactly as long as the button is down. A manager
-	// that dies mid-move, a drag the manager cancels, a window that never gets a
-	// configure - none of them can hold a button down. If the question cannot be
-	// answered at all, because the symbol is missing or GDK will not say, it
-	// answers "not held" and nothing is ever suppressed, so that failure mode is
-	// the old behaviour rather than a panel that cannot be closed. The one
-	// remaining way for the pointer itself to lie - a physically stuck button - is
-	// what settleDrag's deadline is for.
-	//
-	// Both halves are needed. The latch alone would suppress dismissals for the
-	// rest of the panel's life, since nothing announces the end of the move. The
-	// button alone would suppress them whenever the user happens to be holding a
-	// button somewhere else entirely - drag-selecting text in the window that just
-	// took the focus, say - deferring a close that has nothing to do with a move.
-	//
-	// For that second guarantee to be real the latch must be cleared when the
-	// move ENDS, not lazily whenever the next dismissal happens to ask. Clearing
-	// it here only was a bug with teeth: after one drag the latch stayed set for
-	// the panel's whole life, so any button held anywhere on the desktop suppressed
-	// a focus-loss close - and Escape, which is dropped rather than deferred, was
-	// swallowed outright, leaving the panel with only its title bar. The drag
-	// handler therefore arms the poller below, which clears the latch as soon as
-	// the button comes up whether or not anything is waiting on it.
-	inMove := func() bool {
-		if !dragging {
-			return false
-		}
-		held, ok := gtk.PrimaryButtonHeld()
-		if !ok || !held {
-			// The move is over, or GDK cannot say. Either way the latch has done
-			// its job and must not outlive it.
-			dragging = false
-			return false
-		}
-		return true
-	}
-
-	// settleDrag disposes of a focus loss that was suppressed during a move, and
-	// is the only thing that ever does. It re-arms itself until the button comes
-	// up, so it is also the only thing here that polls.
-	//
-	// THE CHOICE, stated once: a suppressed focus loss is HONOURED when the move
-	// ends, unless the panel has the focus back by then or has been pinned in the
-	// meantime. That is forecast_windows.go's settleDrag rule, reached the same
-	// way - re-read the state now rather than trust the decision that was
-	// deferred.
-	//
-	// Dropping it outright would be wrong for exactly the reason it is wrong
-	// there: focus-out is delivered on the TRANSITION, so a panel that is already
-	// unfocused is never told again unless it is focused first. An unpinned panel
-	// would then sit above whatever the user switched to with only its title bar
-	// and the tray icon left to close it, which is the opposite of what "closes
-	// when you look away" promised. Honouring it unconditionally would be equally
-	// wrong: the ordinary end of a drag hands the focus straight back, and closing
-	// then would make the panel vanish the instant the user let go of it.
-	var settleDrag func()
-	settleDrag = func() {
-		if closed {
-			// The title bar's close button, the tray toggle or the window manager
-			// got there first. No window left to close and no position left to read.
-			settling, deferred = false, false
-			return
-		}
-		if inMove() {
-			if time.Now().Before(settleBy) {
-				gtk.After(dragPoll, settleDrag)
-				return
-			}
-			// The only way to be here is a button GDK keeps reporting as down
-			// long past any real drag. Acting anyway is the lesser evil: the
-			// panel is otherwise immune to focus loss for as long as the lie
-			// lasts. Destroying a window mid-move is safe - the manager ends its
-			// grab on DestroyNotify - which is what makes this the safe direction
-			// to fail in.
-			log.Printf("forecast: the primary button has read as held for %s since a close was deferred; settling anyway", dragSettleMax)
-			dragging = false
-		}
-		settling = false
-		if !deferred {
-			return
-		}
-		deferred = false
-		if pinned() {
-			return
-		}
-		if focused {
-			log.Print("forecast: the focus came back before the move ended; staying open")
-			return
-		}
-		log.Print("forecast: closing, the focus was taken during a window-manager move")
-		byFocus = true
-		dismiss()
-	}
-
-	// Escape always works; losing focus is the convenience path. Both are what
-	// pinning switches off, and both are what a move in progress suspends, which
-	// leaves the tray icon and the title bar's close button as the ways out. So
-	// none of those three may ever consult pinned or inMove. They destroy the panel
-	// mid-move if that is what the user asked for, and that is safe.
-	//
-	// Focus loss is armed only after the panel has actually held focus once,
-	// because a window is not guaranteed to be given focus when it is mapped:
-	// without this the first focus-out - which can arrive before the user has seen
-	// anything - closes the panel again immediately, and the symptom is a panel
-	// that flickers and vanishes, intermittently, depending on what held focus at
-	// the moment it opened. That was measured on a window with no frame, which a
-	// manager is freest to leave unfocused; a framed window is likelier to be given
-	// focus on map, but nothing promises it and the guard costs one bool. The Win32
-	// backend has always armed this.
-	armed := false
-	win.OnEscape(func() {
-		if pinned() {
-			return
-		}
-		if inMove() {
-			// Dropped, not deferred, which is the opposite of what happens to a
-			// focus loss and is deliberate. During a move Escape is the window
-			// manager's own cancel-the-drag key: measured under Marco it never
-			// reaches this handler at all, because the manager takes the key,
-			// cancels the move and puts the window back. One that DOES arrive
-			// therefore comes from a manager that does not bind it or from GDK's
-			// emulated move path, and either way the keystroke was aimed at the
-			// drag rather than at the panel. Nothing is lost by dropping it: unlike
-			// focus-out, Escape is not delivered on a transition, so a user who did
-			// mean "close" presses it again once the panel has stopped moving.
-			log.Print("forecast: Escape during a window-manager move, ignored; it belongs to the drag")
-			return
-		}
-		dismiss()
-	})
-	armSettle = func() {
-		if settling {
-			return
-		}
-		settling = true
-		settleBy = time.Now().Add(dragSettleMax)
-		gtk.After(dragPoll, settleDrag)
-	}
-
-	win.OnFocusIn(func() { armed, focused = true, true })
-	win.OnFocusOut(func() {
-		focused = false
-		if !armed || pinned() {
-			return
-		}
-		if inMove() {
-			if !deferred {
-				// Logged for the same reason the suppression exists at all: from
-				// the outside, and from a log, a suppressed close is
-				// indistinguishable from no event having happened. It is the only
-				// evidence that this path ran. Guarded on deferred rather than
-				// printed per event, so a focus storm during one drag costs one
-				// line and cannot pad the log file.
-				log.Print("forecast: the focus was taken during a window-manager move; deferring the close until the button is released")
-			}
-			deferred = true
-			armSettle()
-			return
-		}
-		// Any window taking focus lands here, not just one the user clicked -
-		// a notification or a background window will close the panel too. The
-		// line is here because an unexplained disappearance is otherwise
-		// indistinguishable from a crash.
-		log.Print("forecast: closing, focus lost")
-		byFocus = true
-		dismiss()
-	})
-
-	// The title bar's close button is the ordinary way this panel gets closed, so
-	// it has to run the panel's own dismissal rather than GTK's default destroy:
-	// the default reports nothing, which would mean a panel the user dragged
-	// somewhere almost never remembers where it was dropped. It is handed dismiss
-	// bare, with none of the guards Escape and focus loss are wrapped in, because a
-	// close button that asked whether the panel is pinned would be a close button
-	// that does nothing.
+	// The title bar's close button is one of the two ways this panel gets closed -
+	// the tray icon is the other - so it has to run the panel's own dismissal
+	// rather than GTK's default destroy: the default reports nothing, which would
+	// mean a panel the user dragged somewhere almost never remembers where it was
+	// dropped. It is handed dismiss bare, with no guard in front of it, because a
+	// close button that could decline to close is not a close button.
 	//
 	// A close arriving from outside the window - a session shutdown, a wmctrl -c -
 	// comes through here too and reports a position as well. That is sound where
@@ -809,8 +535,9 @@ func inside(r gtk.Rect, x, y int) bool {
 // work area. The area is not necessarily the one the position was saved on: a
 // resolution change, a dock appearing or a monitor being rearranged can all
 // leave a position that was legitimate when it was written with most of the
-// panel hanging off an edge, and a panel whose title bar is off-screen while it
-// is pinned cannot be closed from the window at all.
+// panel hanging off an edge, and a panel whose title bar is off-screen cannot be
+// closed from the window at all - the close button on it is one of only two ways
+// out.
 //
 // The lower bounds are applied last on purpose. When the panel is larger than
 // the work area - a small screen with a large font scale - the upper bound comes

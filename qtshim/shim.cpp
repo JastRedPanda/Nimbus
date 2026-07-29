@@ -37,7 +37,6 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QHBoxLayout>
-#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -99,14 +98,6 @@ const int theadPt = 11;
 const int cellPt = 11;
 const int panelMargin = 12;
 
-// How the settler for a suppressed dismissal is paced - see Panel::settle. The
-// GTK panel's dragPoll and dragSettleMax in milliseconds, and for the reasons
-// spelled out there: fast enough that the panel closes as the user lets go, and
-// backstopped far past any real drag, because the only thing it guards against is
-// a pointer that reports a button as held forever.
-const int dragPollMs = 100;
-const int dragSettleMaxMs = 20000;
-
 // placeSettleMs is how long the panel waits before taking the window's position
 // as the baseline a later title-bar drag is measured against. Long enough for a
 // window manager to finish placing a window it has just been given, short enough
@@ -145,17 +136,14 @@ struct PanelSpec {
 class Panel : public QWidget {
 public:
     Panel(const PanelSpec &s, unsigned long long id,
-          int (*pinned)(unsigned long long),
           void (*event)(unsigned long long, long long, long long, long long));
 
-    // dismiss is the panel's single exit: Escape, focus loss, the title bar's
-    // close button and the tray toggle all leave through here, which is the only
-    // reason the position gets reported at all.
-    //
-    // byFocus is passed on because only a focus-loss close may arm the tray's
-    // toggle grace. Arming it after a deliberate close is what once ate twelve
-    // consecutive clicks from a user tapping the tray icon.
-    void dismiss(bool byFocus);
+    // dismiss is the panel's single exit, and exactly two things reach it: the
+    // title bar's close button and the tray toggle. That is the whole dismissal
+    // policy - the panel stays until it is closed deliberately, so neither Escape
+    // nor losing the focus takes it away - and routing both through one place is
+    // the only reason the position gets reported at all.
+    void dismiss();
 
     // place is called between construction and show, when the layout has run but
     // the window is not yet on screen.
@@ -163,21 +151,14 @@ public:
 
 protected:
     void mousePressEvent(QMouseEvent *) override;
-    void keyPressEvent(QKeyEvent *) override;
-    void changeEvent(QEvent *) override;
     void closeEvent(QCloseEvent *) override;
 
 private:
     QWidget *hairline(int h);
     QLabel *cell(const QString &text, int align, int pt, bool bold);
     void buildTable(const PanelSpec &s);
-    bool pinned() const { return pinned_ && pinned_(id_) != 0; }
-    bool inMove();
-    void armSettle();
-    void settle();
 
     unsigned long long id_ = 0;
-    int (*pinned_)(unsigned long long) = nullptr;
     void (*event_)(unsigned long long, long long, long long, long long) = nullptr;
 
     bool closed_ = false;
@@ -189,26 +170,13 @@ private:
     // the user never chose.
     bool handedOff_ = false;
     QPoint origin_;
-    // armed_ delays the focus-loss rule until the panel has actually held focus
-    // once: whether a freshly mapped window is activated at all is the window
-    // manager's decision, and without this a deactivation that arrives before the
-    // first activation closes the panel before the user has seen it.
-    bool armed_ = false;
-    // dragging_ says a press was handed to the move loop and the button has not
-    // been seen up since. deferred_ is a focus loss that arrived during a move and
-    // has not been settled; settling_ keeps a burst of focus events to one settler.
-    bool dragging_ = false;
-    bool deferred_ = false;
-    bool settling_ = false;
-    int waited_ = 0;
 };
 
 Panel *panel = nullptr;
 
 Panel::Panel(const PanelSpec &s, unsigned long long id,
-             int (*pinned)(unsigned long long),
              void (*event)(unsigned long long, long long, long long, long long))
-    : id_(id), pinned_(pinned), event_(event) {
+    : id_(id), event_(event) {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(s.title);
 
@@ -352,142 +320,25 @@ void Panel::mousePressEvent(QMouseEvent *e) {
         handedOff_ = true;
         origin_ = pos();
     }
-    dragging_ = true;
-    // Watch for the button coming up. Nothing else can tell the latch the move is
-    // over: the release goes to whoever holds the pointer grab for the move, which
-    // is the window manager and never this window.
-    armSettle();
+    // There is no matching release handler and there can be no use for one: from
+    // here on the pointer is grabbed by the window manager, so the button coming
+    // up is delivered to it and never to this window. Nothing in the panel needs
+    // to know when the move ended.
     if (QWindow *w = windowHandle()) {
         w->startSystemMove();
     }
 }
 
-void Panel::keyPressEvent(QKeyEvent *e) {
-    if (e->key() != Qt::Key_Escape) {
-        QWidget::keyPressEvent(e);
-        return;
-    }
-    if (pinned()) {
-        return;
-    }
-    if (inMove()) {
-        // Dropped, not deferred, which is the opposite of what happens to a focus
-        // loss and is deliberate: during a move Escape is the window manager's own
-        // cancel-the-drag key, so one that arrives here was aimed at the drag
-        // rather than at the panel. Nothing is lost - unlike a deactivation,
-        // Escape is not delivered on a transition, so a user who did mean "close"
-        // presses it again once the panel has stopped moving.
-        return;
-    }
-    dismiss(false);
-}
-
-// changeEvent is where focus loss arrives: Qt reports activation as a state
-// change on the window rather than as an event of its own.
-void Panel::changeEvent(QEvent *e) {
-    if (e->type() != QEvent::ActivationChange) {
-        QWidget::changeEvent(e);
-        return;
-    }
-    if (isActiveWindow()) {
-        armed_ = true;
-        return;
-    }
-    if (!armed_ || pinned()) {
-        return;
-    }
-    if (inMove()) {
-        // Suppressed rather than dropped, and settled when the button comes up -
-        // see settle for why a focus loss cannot simply be discarded.
-        deferred_ = true;
-        armSettle();
-        return;
-    }
-    dismiss(true);
-}
-
 void Panel::closeEvent(QCloseEvent *e) {
     // The title bar's close button, a session shutdown or a wmctrl -c all land
     // here. Routing them through dismiss is what makes them report the panel's
-    // position like every other exit; without it a panel the user dragged and then
-    // closed by its title bar would forget where it had been put.
-    dismiss(false);
+    // position like the tray toggle does; without it a panel the user dragged and
+    // then closed by its title bar would forget where it had been put.
+    dismiss();
     e->accept();
 }
 
-// inMove reports whether the window manager is moving the panel right now, and it
-// recomputes the answer from the pointer every time rather than trusting a latch.
-//
-// That is what makes an abnormally ended drag harmless. Immunity to dismissal
-// lasts exactly as long as the button is physically down: a manager that dies
-// mid-move, a drag the manager cancels, a window that never gets a configure -
-// none of them can hold a button down. The latch alone would suppress dismissals
-// for the rest of the panel's life, since nothing announces the end of a move;
-// the button alone would suppress them whenever the user happens to be holding a
-// button somewhere else entirely.
-bool Panel::inMove() {
-    if (!dragging_) {
-        return false;
-    }
-    if (!(QGuiApplication::mouseButtons() & Qt::LeftButton)) {
-        dragging_ = false;
-        return false;
-    }
-    return true;
-}
-
-void Panel::armSettle() {
-    if (settling_) {
-        return;
-    }
-    settling_ = true;
-    waited_ = 0;
-    QTimer::singleShot(dragPollMs, this, [this]() { settle(); });
-}
-
-// settle disposes of a focus loss that was suppressed during a move, and is the
-// only thing here that polls.
-//
-// THE CHOICE, stated once: a suppressed focus loss is HONOURED when the move
-// ends, unless the panel has the focus back by then or has been pinned in the
-// meantime - the state is re-read now rather than the deferred decision trusted.
-// Dropping it outright would be wrong because deactivation is delivered on the
-// transition, so a panel that is already inactive is never told again, and an
-// unpinned one would sit above whatever the user switched to. Honouring it
-// unconditionally would be equally wrong: the ordinary end of a drag hands the
-// focus straight back, and closing then would make the panel vanish the instant
-// the user let go of it.
-//
-// The timer is bound to this widget, so a panel that something else closed in the
-// meantime simply never gets the callback.
-void Panel::settle() {
-    if (closed_) {
-        settling_ = deferred_ = false;
-        return;
-    }
-    if (inMove()) {
-        waited_ += dragPollMs;
-        if (waited_ < dragSettleMaxMs) {
-            QTimer::singleShot(dragPollMs, this, [this]() { settle(); });
-            return;
-        }
-        // The only way to be here is a button Qt keeps reporting as down long past
-        // any real drag. Acting anyway is the lesser evil: the panel is otherwise
-        // immune to focus loss for as long as the lie lasts.
-        dragging_ = false;
-    }
-    settling_ = false;
-    if (!deferred_) {
-        return;
-    }
-    deferred_ = false;
-    if (pinned() || isActiveWindow()) {
-        return;
-    }
-    dismiss(true);
-}
-
-void Panel::dismiss(bool byFocus) {
+void Panel::dismiss() {
     if (closed_) {
         return;
     }
@@ -512,7 +363,7 @@ void Panel::dismiss(bool byFocus) {
                 event_(id_, NIMBUS_QT_EV_MOVED, p.x(), p.y());
             }
         }
-        event_(id_, NIMBUS_QT_EV_CLOSED, byFocus ? 1 : 0, 0);
+        event_(id_, NIMBUS_QT_EV_CLOSED, 0, 0);
     }
     close();
 }
@@ -524,8 +375,8 @@ void Panel::dismiss(bool byFocus) {
 // run, so both placements come after adjustSize. The remembered position is
 // honoured only if some screen still contains it - a display that was unplugged
 // or a rearranged desktop can leave a position that was legitimate when it was
-// written with the whole panel off screen, and a pinned panel whose close button
-// is off screen cannot be closed from the window at all.
+// written with the whole panel off screen, and a panel whose close button is off
+// screen cannot be closed from the window at all.
 void Panel::place(bool haveAt, int x, int y) {
     adjustSize();
     const QSize sz = size();
@@ -869,7 +720,6 @@ void nimbus_qt_forecast_row(const char *day, const char *symbol, const char *tem
 }
 
 void nimbus_qt_forecast_show(unsigned long long id, int have_at, int x, int y,
-                             int (*pinned)(unsigned long long),
                              void (*event)(unsigned long long, long long, long long, long long)) {
     if (!app) {
         return;
@@ -882,7 +732,7 @@ void nimbus_qt_forecast_show(unsigned long long id, int have_at, int x, int y,
         spec = PanelSpec();
         return;
     }
-    Panel *p = new Panel(spec, id, pinned, event);
+    Panel *p = new Panel(spec, id, event);
     panel = p;
     p->place(have_at != 0, x, y);
     p->show();
@@ -895,7 +745,7 @@ int nimbus_qt_forecast_close(void) {
     if (!panel) {
         return 0;
     }
-    panel->dismiss(false);
+    panel->dismiss();
     return 1;
 }
 

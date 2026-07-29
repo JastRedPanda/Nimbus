@@ -21,18 +21,6 @@ type Config struct {
 	Language       string  `json:"language"`
 	FontScale      int     `json:"font_scale"`
 
-	// ForecastPinned keeps the forecast panel on screen until the tray icon or
-	// the close button dismisses it: while it is set, Escape and losing focus do
-	// nothing.
-	//
-	// The tag deliberately has no omitempty, and adding one would break the
-	// setting. The field defaults to true and Load unmarshals the file over
-	// Default(), so a false that omitempty had dropped from the file comes back
-	// as true on the next start - unchecking the box would never stick, and the
-	// symptom would look like the panel ignoring the option rather than like a
-	// struct tag.
-	ForecastPinned bool `json:"forecast_pinned"`
-
 	// ForecastX and ForecastY remember where the panel was last dragged to.
 	// They are pointers because there is no free sentinel value: (0,0) is a
 	// legitimate top-left corner and negative coordinates are legitimate on a
@@ -56,7 +44,6 @@ func Default() *Config {
 		IconTheme:      "auto",
 		Language:       "en",
 		FontScale:      100,
-		ForecastPinned: true,
 	}
 }
 
