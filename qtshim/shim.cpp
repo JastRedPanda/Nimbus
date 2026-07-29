@@ -26,7 +26,6 @@
 
 #include <QApplication>
 #include <QByteArray>
-#include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCursor>
@@ -438,7 +437,7 @@ const int formWidth = 460;
 // scrollbar nobody needed, one too high costs the buttons.
 const int formChromeH = 120;
 
-enum FieldKind { F_TEXT, F_LIST, F_CHOICE, F_COMBO, F_CHECK, F_SLIDER };
+enum FieldKind { F_TEXT, F_LIST, F_CHOICE, F_COMBO, F_SLIDER };
 
 struct Field {
     int key = 0;
@@ -479,8 +478,6 @@ QString valueOf(const Field *f) {
     switch (f->kind) {
     case F_TEXT:
         return static_cast<QLineEdit *>(f->w)->text();
-    case F_CHECK:
-        return static_cast<QCheckBox *>(f->w)->isChecked() ? QStringLiteral("1") : QStringLiteral("0");
     case F_COMBO:
         return QString::number(static_cast<QComboBox *>(f->w)->currentIndex());
     case F_SLIDER:
@@ -932,22 +929,6 @@ void nimbus_qt_form_option(const char *label, int selected) {
     QHBoxLayout *row = static_cast<QHBoxLayout *>(g->layout());
     row->insertWidget(row->count() - 1, b);
     f->radios.append(b);
-}
-
-void nimbus_qt_form_check(int key, const char *label, int checked) {
-    if (!form.dlg) {
-        return;
-    }
-    Field *f = new Field();
-    f->key = key;
-    f->kind = F_CHECK;
-
-    QCheckBox *c = new QCheckBox(utf8(label));
-    c->setChecked(checked != 0);
-    f->w = c;
-
-    where()->addWidget(c);
-    form.fields.append(f);
 }
 
 void nimbus_qt_form_slider(int key, const char *label, int min, int max, int value) {

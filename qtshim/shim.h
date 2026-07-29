@@ -177,9 +177,6 @@ void nimbus_qt_form_choice(int key, const char *label);
 void nimbus_qt_form_combo(int key, const char *label);
 void nimbus_qt_form_option(const char *label, int selected);
 
-// nimbus_qt_form_check adds a checkbox, whose own label is its title.
-void nimbus_qt_form_check(int key, const char *label, int checked);
-
 // nimbus_qt_form_slider adds a slider with a percentage readout beside it. Every
 // movement reports NIMBUS_QT_EV_SLIDE so the caller can preview live; the caller
 // is expected to coalesce, because a drag across the range emits one per step.

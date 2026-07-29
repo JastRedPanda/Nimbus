@@ -144,9 +144,10 @@ func (a *app) showForecast() {
 	// and that path has no menu line above it.
 	log.Print("tray: opening the forecast")
 	a.cfgMu.Lock()
-	// The reset count the panel is opened against. A panel outlives the settings
-	// window - that is what pinning it is for - so a report can arrive after the
-	// configuration it was opened under has been thrown away. See saveForecastPos.
+	// The reset count the panel is opened against. The panel stays up until it is
+	// closed deliberately, so it outlives the settings window and a report can
+	// arrive after the configuration it was opened under has been thrown away.
+	// See saveForecastPos.
 	gen := config.Resets()
 	req := gui.Forecast{
 		Lat:      a.cfg.Latitude,
