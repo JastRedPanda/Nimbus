@@ -3,56 +3,42 @@
 package runonce
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"syscall"
+	"unsafe"
 )
 
-const appName = "nimbus"
-
-func lockPath() string {
-	return filepath.Join(os.TempDir(), appName+".lock")
-}
-
-var lockFile *os.File
+var (
+	kernel32         = syscall.NewLazyDLL("kernel32.dll")
+	procMutex        = kernel32.NewProc("CreateMutexW")
+	procReleaseMutex = kernel32.NewProc("ReleaseMutex")
+	procCloseHandle  = kernel32.NewProc("CloseHandle")
+	mu               uintptr
+	mutexName        = syscall.StringToUTF16Ptr("Local\\Nimbus-{7a3c1b0e-1d4a-4e2f-8c9d-0a1b2c3d4e5f}")
+)
 
 func Lock() bool {
-	path := lockPath()
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-	if err == nil {
-		lockFile = f
-		f.WriteString(strconv.Itoa(os.Getpid()))
-		f.Sync()
+	r, _, err := syscall.SyscallN(
+		procMutex.Addr(),
+		0,
+		1,
+		uintptr(unsafe.Pointer(mutexName)),
+	)
+	mu = r
+	if mu == 0 {
 		return true
 	}
-
-	data, readErr := os.ReadFile(path)
-	if readErr == nil {
-		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-		if parseErr == nil {
-			proc, procErr := os.FindProcess(pid)
-			if procErr == nil && proc.Signal(os.Signal(nil)) == nil {
-				return false
-			}
-		}
+	if err == syscall.Errno(183) {
+		procCloseHandle.Call(mu)
+		mu = 0
+		return false
 	}
-
-	os.Remove(path)
-	f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-	if err != nil {
-		return true
-	}
-	lockFile = f
-	f.WriteString(strconv.Itoa(os.Getpid()))
-	f.Sync()
 	return true
 }
 
 func Unlock() {
-	if lockFile != nil {
-		lockFile.Close()
-		os.Remove(lockFile.Name())
-		lockFile = nil
+	if mu != 0 {
+		procReleaseMutex.Call(mu)
+		procCloseHandle.Call(mu)
+		mu = 0
 	}
 }
