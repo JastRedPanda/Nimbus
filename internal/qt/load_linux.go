@@ -67,7 +67,7 @@ var (
 	qtFont   func(unsafe.Pointer, int32)
 	qtIcon   func(unsafe.Pointer, int32)
 
-	qtPanelBegin  func(string, int32, int32)
+	qtPanelBegin  func(string)
 	qtPanelHeader func(string, int32)
 	qtPanelRow    func(string, string, string, string, string)
 	qtPanelShow   func(uint64, int32, int32, int32, uintptr, uintptr)

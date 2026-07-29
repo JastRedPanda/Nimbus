@@ -44,29 +44,6 @@ func TestPickClampsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestAppearanceRadioOrderFavoursModern pins the option order the appearance
-// group is built with. Modern has to be the FIRST option: index answers 0 for
-// anything it does not recognise and pick answers the first option for any index
-// out of range, so putting the system look first would make a hand-edited or
-// downgraded config file mean "system look" - the opposite of the rule the panel
-// applies to the same string.
-func TestAppearanceRadioOrderFavoursModern(t *testing.T) {
-	opts := []string{"modern", "system"}
-	for _, c := range []struct {
-		value string
-		want  int
-	}{
-		{"modern", 0}, {"system", 1}, {"", 0}, {"Modern", 0}, {"glass", 0},
-	} {
-		if got := Index(c.value, opts...); got != c.want {
-			t.Errorf("Index(%q) = %d, want %d", c.value, got, c.want)
-		}
-	}
-	if got := Pick(Index("glass", opts...), opts...); got != "modern" {
-		t.Errorf("an unrecognised stored look saves as %q, want \"modern\"", got)
-	}
-}
-
 func TestParseCoordKeepsPreviousOnGarbage(t *testing.T) {
 	// An empty or mistyped field must not silently relocate the user.
 	for _, s := range []string{"", "abc", "50,45", "--"} {

@@ -168,12 +168,8 @@ func (a *app) showForecast() {
 		Lang:     a.cfg.Language,
 		Theme:    a.cfg.IconTheme,
 		WindUnit: a.cfg.WindUnit,
-		// Read once here, unlike Pinned: the look is decided when the window is
-		// created and cannot change under a panel that is already on screen, so it
-		// needs none of the atomic mirroring the dismissal policy needs.
-		Appearance: a.cfg.Appearance,
-		Pinned:     a.pinned.Load,
-		OnMove:     func(x, y int) { a.saveForecastPos(gen, x, y) },
+		Pinned:   a.pinned.Load,
+		OnMove:   func(x, y int) { a.saveForecastPos(gen, x, y) },
 	}
 	// Both position decisions belong here rather than in the panels, and neither
 	// of them asks whether the panel is pinned. The checkbox decides one thing

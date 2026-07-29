@@ -43,8 +43,6 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMouseEvent>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
@@ -99,7 +97,6 @@ const int pagePad = 14;
 const int pagePadTop = 4;
 const int theadPt = 11;
 const int cellPt = 11;
-const int sheetRadius = 14;
 const int panelMargin = 12;
 
 // How the settler for a suppressed dismissal is paced - see Panel::settle. The
@@ -110,50 +107,12 @@ const int panelMargin = 12;
 const int dragPollMs = 100;
 const int dragSettleMaxMs = 20000;
 
-// placeSettleMs is how long the system look waits before taking the window's
-// position as the baseline a later title-bar drag is measured against. Long
-// enough for a window manager to finish placing a window it has just been given,
-// short enough that a user cannot drag the panel before it elapses. The GTK
-// panel's placeSettle, and it is here for the same reason - see the call site.
+// placeSettleMs is how long the panel waits before taking the window's position
+// as the baseline a later title-bar drag is measured against. Long enough for a
+// window manager to finish placing a window it has just been given, short enough
+// that a user cannot drag the panel before it elapses. The GTK panel's
+// placeSettle, and it is here for the same reason - see the call site.
 const int placeSettleMs = 400;
-
-// The Modern palette, straight out of style_linux.go. The two sheet alphas are
-// its 0.96 and 0.98 rounded to eight bits.
-struct Palette {
-    QColor sheet, ink, head, hair, rule;
-    QString hover;
-};
-
-Palette paletteFor(bool dark) {
-    Palette p;
-    if (dark) {
-        p.sheet = QColor(0x1c, 0x1f, 0x26, 245);
-        p.ink = QColor(0xf2, 0xf4, 0xf7);
-        p.head = QColor(0x9a, 0xa3, 0xb0);
-        p.hair = QColor(255, 255, 255, 26); // rgba(255,255,255,0.10)
-        p.rule = QColor(255, 255, 255, 71); // rgba(255,255,255,0.28)
-        p.hover = QStringLiteral("rgba(255,255,255,0.10)");
-    } else {
-        p.sheet = QColor(0xff, 0xff, 0xff, 250);
-        p.ink = QColor(0x14, 0x16, 0x1a);
-        p.head = QColor(0x5b, 0x64, 0x72);
-        p.hair = QColor(0, 0, 0, 26); // rgba(0,0,0,0.10)
-        p.rule = QColor(0, 0, 0, 61);  // rgba(0,0,0,0.24)
-        p.hover = QStringLiteral("rgba(0,0,0,0.08)");
-    }
-    return p;
-}
-
-// resolveDark answers the "auto" theme the way the GTK panel does: by asking the
-// desktop theme which way round it draws text. A light foreground means a dark
-// theme. Reading the theme's own ink is more reliable than any prefer-dark flag,
-// which stays false under themes that are simply dark.
-bool resolveDark(int dark) {
-    if (dark >= 0) {
-        return dark != 0;
-    }
-    return QApplication::palette().color(QPalette::WindowText).lightness() > 127;
-}
 
 Qt::Alignment alignFor(int align) {
     switch (align) {
@@ -179,8 +138,6 @@ struct Day {
 // a panel that was built and never shown cannot leak into the following one.
 struct PanelSpec {
     QString title;
-    bool system = false;
-    int dark = -1;
     QVector<Column> cols;
     QVector<Day> days;
 } spec;
@@ -191,9 +148,9 @@ public:
           int (*pinned)(unsigned long long),
           void (*event)(unsigned long long, long long, long long, long long));
 
-    // dismiss is the panel's single exit: the x button, Escape, focus loss, the
-    // title bar's close button and the tray toggle all leave through here, which
-    // is the only reason the position gets reported at all.
+    // dismiss is the panel's single exit: Escape, focus loss, the title bar's
+    // close button and the tray toggle all leave through here, which is the only
+    // reason the position gets reported at all.
     //
     // byFocus is passed on because only a focus-loss close may arm the tray's
     // toggle grace. Arming it after a deliberate close is what once ate twelve
@@ -205,16 +162,14 @@ public:
     void place(bool haveAt, int x, int y);
 
 protected:
-    void paintEvent(QPaintEvent *) override;
-    void resizeEvent(QResizeEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
     void changeEvent(QEvent *) override;
     void closeEvent(QCloseEvent *) override;
 
 private:
-    QWidget *hairline(int h, const QColor &c);
-    QLabel *cell(const QString &text, int align, const QColor &c, int pt, bool bold);
+    QWidget *hairline(int h);
+    QLabel *cell(const QString &text, int align, int pt, bool bold);
     void buildTable(const PanelSpec &s);
     bool pinned() const { return pinned_ && pinned_(id_) != 0; }
     bool inMove();
@@ -224,9 +179,6 @@ private:
     unsigned long long id_ = 0;
     int (*pinned_)(unsigned long long) = nullptr;
     void (*event_)(unsigned long long, long long, long long, long long) = nullptr;
-
-    bool system_ = false;
-    Palette pal_;
 
     bool closed_ = false;
     // handedOff_ and origin_ are the two halves of what licenses reporting a
@@ -238,9 +190,9 @@ private:
     bool handedOff_ = false;
     QPoint origin_;
     // armed_ delays the focus-loss rule until the panel has actually held focus
-    // once: an undecorated window is not guaranteed focus when it is mapped, and
-    // without this the first deactivation closes the panel before the user has
-    // seen it.
+    // once: whether a freshly mapped window is activated at all is the window
+    // manager's decision, and without this a deactivation that arrives before the
+    // first activation closes the panel before the user has seen it.
     bool armed_ = false;
     // dragging_ says a press was handed to the move loop and the button has not
     // been seen up since. deferred_ is a focus loss that arrived during a move and
@@ -256,127 +208,84 @@ Panel *panel = nullptr;
 Panel::Panel(const PanelSpec &s, unsigned long long id,
              int (*pinned)(unsigned long long),
              void (*event)(unsigned long long, long long, long long, long long))
-    : id_(id), pinned_(pinned), event_(event), system_(s.system) {
-    pal_ = paletteFor(resolveDark(s.dark));
-
+    : id_(id), pinned_(pinned), event_(event) {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(s.title);
 
     // Qt::Tool is what keeps the panel off the taskbar and the pager: it asks for
     // _NET_WM_WINDOW_TYPE_UTILITY, which a window manager reads as "not an
-    // application window". The system look keeps the frame the manager draws for
-    // it; Modern asks for none.
+    // application window". The frame the manager draws for it is kept - the panel
+    // is an ordinary window that happens to stay above the others.
     //
     // Not sticky across workspaces, which is the one panel hint the GTK backend
     // sets and this cannot: Qt exposes no equivalent of gtk_window_stick, and
     // reaching around it would mean talking to X11 directly and giving up Wayland.
-    Qt::WindowFlags flags = Qt::Tool | Qt::WindowStaysOnTopHint;
-    if (!system_) {
-        flags |= Qt::FramelessWindowHint;
-        setAttribute(Qt::WA_TranslucentBackground);
-    }
-    setWindowFlags(flags);
+    setWindowFlags(Qt::Tool | Qt::WindowStaysOnTopHint);
 
     QVBoxLayout *page = new QVBoxLayout(this);
     page->setContentsMargins(pagePad, pagePadTop, pagePad, pagePad);
     page->setSpacing(pageGapY);
 
-    // The close row is Modern's stand-in for a title bar and belongs to it alone.
-    // The system look has the real thing, and two close buttons in one window is
-    // one too many.
-    if (!system_) {
-        // U+00D7 MULTIPLICATION SIGN. Bold as well as larger: it has thin strokes
-        // and little ink for its em, so size alone barely reads. Kept over a
-        // heavier codepoint like U+2715 because every font ships it.
-        QPushButton *x = new QPushButton(QString::fromUtf8("\xc3\x97"), this);
-        x->setStyleSheet(QStringLiteral("QPushButton{border:none;background:transparent;"
-                                        "font-size:15pt;font-weight:bold;padding:0 9px;"
-                                        "border-radius:8px;color:%1;}"
-                                        "QPushButton:hover{background:%2;color:%3;}")
-                             .arg(pal_.head.name(), pal_.hover, pal_.ink.name()));
-        x->setFocusPolicy(Qt::NoFocus);
-        QObject::connect(x, &QPushButton::clicked, this, [this]() { dismiss(false); });
-
-        QHBoxLayout *row = new QHBoxLayout();
-        row->setContentsMargins(0, 0, 0, 0);
-        row->addStretch(1);
-        row->addWidget(x);
-        page->addLayout(row);
-    }
-
     buildTable(s);
     setMinimumWidth(forecastWidth);
 
-    // The system look needs a second way to establish an origin, because the
-    // obvious gesture in it - dragging the window by its title bar - never reaches
-    // the toolkit at all. The window manager owns the caption and moves the window
-    // itself, so no mouse press is delivered, handedOff_ stays false, and a panel
-    // the user dragged across the screen by its title bar would report nothing.
+    // A press on the body is not the only way the panel gets moved, and the other
+    // one never reaches the toolkit at all: the window manager owns the caption and
+    // moves the window itself, so a drag by the title bar delivers no mouse press,
+    // handedOff_ stays false, and a panel the user dragged across the screen that
+    // way would report nothing.
     //
-    // So in that look the window's settled placement is taken as the origin once,
-    // shortly after it is shown, and everything after that is a move. The delay is
-    // what makes it a SETTLED position rather than a transient one: the manager may
+    // So the window's settled placement is taken as the origin once, shortly after
+    // it is shown, and everything after that counts as a move. The delay is what
+    // makes it a SETTLED position rather than a transient one: the manager may
     // adjust a freshly mapped window, and a baseline read mid-adjustment would make
     // the adjustment itself look like something the user did.
     //
-    // Modern needs none of this - it has no frame for a manager to move it by, so
-    // the press is always ours to see. The Win32 backend has the same problem and
-    // solves it in the same spirit, by capturing the origin in WM_ENTERSIZEMOVE.
-    if (system_) {
-        QTimer::singleShot(placeSettleMs, this, [this]() {
-            if (closed_ || handedOff_) {
-                return;
-            }
-            handedOff_ = true;
-            origin_ = pos();
-        });
-    }
+    // The Win32 backend has the same problem and solves it in the same spirit, by
+    // capturing the origin in WM_ENTERSIZEMOVE.
+    QTimer::singleShot(placeSettleMs, this, [this]() {
+        if (closed_ || handedOff_) {
+            return;
+        }
+        handedOff_ = true;
+        origin_ = pos();
+    });
 }
 
 // hairline is one row separator: a plain widget with a background rather than a
-// QFrame, because a QFrame's line is drawn by the style and the Modern look
-// states its own colours precisely so that the desktop theme does not.
-QWidget *Panel::hairline(int h, const QColor &c) {
+// QFrame, because a QFrame's line thickness is the style's to choose and the
+// table needs two weights of its own - see buildTable.
+QWidget *Panel::hairline(int h) {
     QWidget *w = new QWidget(this);
     w->setFixedHeight(h);
     QPalette p = w->palette();
-    p.setColor(QPalette::Window, c);
+    p.setColor(QPalette::Window, palette().color(QPalette::Mid));
     w->setPalette(p);
     w->setAutoFillBackground(true);
     return w;
 }
 
-QLabel *Panel::cell(const QString &text, int align, const QColor &c, int pt, bool bold) {
+QLabel *Panel::cell(const QString &text, int align, int pt, bool bold) {
     QLabel *l = new QLabel(text, this);
     l->setAlignment(alignFor(align));
     QFont f = l->font();
     f.setPointSize(pt);
     f.setBold(bold);
     l->setFont(f);
-    if (c.isValid()) {
-        QPalette p = l->palette();
-        p.setColor(QPalette::WindowText, c);
-        l->setPalette(p);
-    }
     return l;
 }
 
 // buildTable lays the columns out: captions, a rule, then one row per day with a
 // hairline between neighbours.
 //
-// The system look passes an invalid colour for the text, which leaves every label
-// to the desktop theme - that is what "colours from the desktop theme" is
-// implemented as. Its separators take the theme's own Mid, and it keeps ONE thing
-// of its own: the rule's extra pixel. With the theme painting both weights, the
-// header rule and the row hairlines otherwise collapse into a single
-// indistinguishable line. Thickness is ours, colour is theirs, which is the same
-// split style_linux.go makes.
+// No label states a colour, which leaves every one of them to the desktop theme -
+// that is what "colours from the desktop theme" is implemented as. The separators
+// take the theme's own Mid, and the table keeps ONE thing of its own: the rule's
+// extra pixel. With the theme painting both weights, the header rule and the row
+// hairlines would otherwise collapse into a single indistinguishable line.
+// Thickness is ours, colour is theirs, and the GTK panel splits it the same way.
 void Panel::buildTable(const PanelSpec &s) {
-    const QColor ink = system_ ? QColor() : pal_.ink;
-    const QColor head = system_ ? QColor() : pal_.head;
-    const QColor hair = system_ ? palette().color(QPalette::Mid) : pal_.hair;
-    const QColor rule = system_ ? palette().color(QPalette::Mid) : pal_.rule;
-    const int ruleH = system_ ? 2 : 1;
+    const int ruleH = 2;
 
     QGridLayout *grid = new QGridLayout();
     grid->setContentsMargins(0, 0, 0, 0);
@@ -386,14 +295,14 @@ void Panel::buildTable(const PanelSpec &s) {
     const int cols = s.cols.size();
     const int span = cols > 0 ? cols : 1;
     for (int i = 0; i < cols; ++i) {
-        grid->addWidget(cell(s.cols[i].caption, s.cols[i].align, head, theadPt, true), 0, i);
+        grid->addWidget(cell(s.cols[i].caption, s.cols[i].align, theadPt, true), 0, i);
     }
-    grid->addWidget(hairline(ruleH, rule), 1, 0, 1, span);
+    grid->addWidget(hairline(ruleH), 1, 0, 1, span);
 
     int row = 2;
     for (int i = 0; i < s.days.size(); ++i) {
         if (i > 0) {
-            grid->addWidget(hairline(1, hair), row, 0, 1, span);
+            grid->addWidget(hairline(1), row, 0, 1, span);
             ++row;
         }
         const Day &d = s.days[i];
@@ -407,14 +316,14 @@ void Panel::buildTable(const PanelSpec &s) {
                 if (symbolFamily.isEmpty() || d.symbol.isEmpty()) {
                     continue;
                 }
-                QLabel *sym = cell(d.symbol, s.cols[c].align, ink, symbolPt, false);
+                QLabel *sym = cell(d.symbol, s.cols[c].align, symbolPt, false);
                 QFont f(symbolFamily);
                 f.setPointSize(symbolPt);
                 sym->setFont(f);
                 grid->addWidget(sym, row, c);
                 continue;
             }
-            grid->addWidget(cell(values[c], s.cols[c].align, ink, cellPt, false), row, c);
+            grid->addWidget(cell(values[c], s.cols[c].align, cellPt, false), row, c);
         }
         ++row;
     }
@@ -428,44 +337,8 @@ void Panel::buildTable(const PanelSpec &s) {
     static_cast<QVBoxLayout *>(layout())->addLayout(grid);
 }
 
-void Panel::paintEvent(QPaintEvent *) {
-    if (system_) {
-        // Nothing of our own: an ordinary application window, painted by the style
-        // and coloured by the desktop theme.
-        return;
-    }
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(Qt::NoPen);
-    p.setBrush(pal_.sheet);
-    p.drawRoundedRect(QRectF(rect()), sheetRadius, sheetRadius);
-}
-
-// resizeEvent keeps the rounded corners honest on a desktop with no compositor.
-//
-// Qt 6 offers no public way to ask whether one is running - QX11Info went away,
-// and QNativeInterface would mean talking to X11 directly, which would cost
-// Wayland - so the panel is drawn to look right either way. The alpha in the fill
-// is honoured where there is a compositor and ignored where there is not; the
-// MASK is what deals with the corners, which would otherwise be four black
-// notches wherever the alpha is ignored, because an ARGB window with nothing
-// compositing it shows its unpainted pixels as black.
-//
-// The cost is a one-pixel staircase on four 14-pixel corners where a compositor
-// would have antialiased them. That is the right way round: barely visible
-// everywhere beats glaring on one real configuration.
-void Panel::resizeEvent(QResizeEvent *) {
-    if (system_) {
-        return;
-    }
-    QPainterPath path;
-    path.addRoundedRect(QRectF(rect()), sheetRadius, sheetRadius);
-    setMask(QRegion(path.toFillPolygon().toPolygon()));
-}
-
 // A press anywhere on the body starts a window-manager move, which is what makes
-// the panel draggable by any part of itself. The close button never gets here: it
-// is a child widget and consumes its own press.
+// the panel draggable by any part of itself and not only by its title bar.
 //
 // Only the FIRST handoff records an origin. A later press happens wherever the
 // user has already dragged the panel to, so keeping the newest origin would make
@@ -534,10 +407,10 @@ void Panel::changeEvent(QEvent *e) {
 }
 
 void Panel::closeEvent(QCloseEvent *e) {
-    // The system look's title-bar button, a session shutdown or a wmctrl -c all
-    // land here. Routing them through dismiss is what makes them report the
-    // panel's position like every other exit; without it a panel the user dragged
-    // and then closed by its title bar would forget where it had been put.
+    // The title bar's close button, a session shutdown or a wmctrl -c all land
+    // here. Routing them through dismiss is what makes them report the panel's
+    // position like every other exit; without it a panel the user dragged and then
+    // closed by its title bar would forget where it had been put.
     dismiss(false);
     e->accept();
 }
@@ -972,11 +845,9 @@ void nimbus_qt_icon(const void *data, int len) {
     QApplication::setWindowIcon(icon);
 }
 
-void nimbus_qt_forecast_begin(const char *title, int system, int dark) {
+void nimbus_qt_forecast_begin(const char *title) {
     spec = PanelSpec();
     spec.title = utf8(title);
-    spec.system = system != 0;
-    spec.dark = dark;
 }
 
 void nimbus_qt_forecast_header(const char *caption, int align) {

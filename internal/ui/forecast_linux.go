@@ -22,20 +22,15 @@ import (
 // the taskbar and the pager, above other windows, sticky across workspaces,
 // draggable by its body, placed where the user last dragged it or else at the
 // work-area corner nearest the click, and dismissed by Escape, by focus loss, or
-// by the window's own close button - the first two only while the panel is not
+// by the title bar's close button - the first two only while the panel is not
 // pinned, and neither of them while the window manager is moving the panel.
 //
-// TWO LOOKS, and what differs between them is chrome and nothing else. MODERN,
-// the default, is the undecorated sheet: no frame, translucent wherever a
-// compositor can actually composite it, rounded corners, coloured from this
-// package's own palettes, and closed by an × button it draws itself because it
-// has no title bar. SYSTEM is an ordinary application window: the window
-// manager's frame and title bar, opaque, square, coloured by the desktop theme,
-// and closed by the title bar's button - which is routed through the same
-// dismissal the × button uses, so it reports the panel's position the way every
-// other exit does. Everything else is identical in both on purpose: the hints
-// listed above, the placement and the remembered position, the tray toggle, the
-// pinning policy, the drag handling, and the table with every metric in it.
+// The panel is an ordinary application window rather than a sheet floating over
+// the desktop: the window manager's frame and title bar, opaque, square, and
+// coloured by the desktop theme. That is why this file states no colour of its
+// own - even the ink the weather symbols are tinted with is read back off the
+// theme - and why the title bar's close button is routed through the panel's own
+// dismissal, so that every exit reports the panel's position alike.
 //
 // Every metric is shared with the Win32 backend value for value - see the
 // constants below and the stylesheet in style_linux.go, whose numbers
@@ -60,10 +55,6 @@ const (
 	rowGapY = 6
 	colGapX = 18
 
-	// Page VBox spacing: the close-button row to the table. Counterpart:
-	// pageGapY.
-	pageGapY = 2
-
 	forecastWindowID = "nimbus-forecast"
 
 	// Clearance from the work-area edges the panel hugs.
@@ -84,19 +75,13 @@ const (
 // as held forever, which is the one way the button state can lie.
 const (
 	dragPoll = 100 * time.Millisecond
-	// placeSettle is how long the system look waits before taking the window's
-	// position as the baseline a later title-bar drag is measured against. Long
-	// enough for a window manager to finish placing a window it has just been given,
-	// short enough that a user cannot drag the panel before it elapses.
+	// placeSettle is how long the panel waits before taking the window's position
+	// as the baseline a later title-bar drag is measured against. Long enough for a
+	// window manager to finish placing a window it has just been given, short enough
+	// that a user cannot drag the panel before it elapses.
 	placeSettle   = 400 * time.Millisecond
 	dragSettleMax = 20 * time.Second
 )
-
-// closeGlyph is the panel's own close affordance in the MODERN look, which has no
-// title bar and therefore no system close button, so the panel supplies one -
-// exactly as the Win32 panel does. The system look does not draw it: its title bar
-// already carries a close button, and two of them in one window is one too many.
-const closeGlyph = "×" // MULTIPLICATION SIGN
 
 // colAlign is the horizontal alignment of each table column, applied to both the
 // header caption and the cells under it so a column reads as one thing. Day
@@ -228,7 +213,7 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	//
 	// closed makes dismiss idempotent, which the deferral further down requires:
 	// a suppressed dismissal is honoured by a callback that runs arbitrarily
-	// later, and by then the × button, the tray toggle or the window manager may
+	// later, and by then the title bar, the tray toggle or the window manager may
 	// already have destroyed this window. A second gtk_widget_destroy on it
 	// would read a GdkWindow that is gone. It is set from the destroy handler as
 	// well as from dismiss, so an exit that never went through dismiss - the
@@ -268,26 +253,7 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		focused   bool
 	)
 
-	// The look is decided here, first, because everything it changes - the frame,
-	// the visual, the palette classes - has to be settled before the window is
-	// realised.
-	//
-	// Tested for "system" with everything else falling through to modern, never by
-	// comparing against "modern": the value arrives from a configuration file the
-	// user can edit by hand, and both an unrecognised string and the empty string a
-	// caller that predates the option sends have to mean the look that existed
-	// before the option did. gui.Forecast.Appearance asks every backend for exactly
-	// this shape.
-	system := req.Appearance == "system"
-
-	// The one thing the two constructors disagree about is whether the window
-	// manager frames the window; every hint either look needs is inside both.
-	var win gtk.Window
-	if system {
-		win = gtk.NewFramedPanel(l.ForecastTitle(), forecastWidth, forecastHeight)
-	} else {
-		win = gtk.NewPanel(l.ForecastTitle(), forecastWidth, forecastHeight)
-	}
+	win := gtk.NewFramedPanel(l.ForecastTitle(), forecastWidth, forecastHeight)
 	win.OnDestroy(func() {
 		closed = true
 		forecastWindow = 0
@@ -298,51 +264,26 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	})
 	gtk.SetName(uintptr(win), forecastWindowID)
 
-	// fg is the ink the rasterised weather symbols are tinted with. It is decided
-	// here, with the colours, because matching them is its whole job.
-	var fg color.NRGBA
-	if system {
-		// No class at all: not .dark or .light, not .solid or .translucent. Every
-		// colour and every corner radius in the stylesheet hangs off one of those
-		// four, so with the name alone none of those rules match while the resets,
-		// the page padding and the two font sizes still do - and the desktop theme
-		// paints the window, its labels and its separators. That is what "colours
-		// from the desktop theme" is implemented as; style_linux.go says which half
-		// of the sheet each look uses and why the halves cannot be merged.
-		//
-		// SetTranslucent is deliberately not called. An RGBA visual exists to
-		// composite the Modern sheet's alpha against the desktop, and this window is
-		// a framed, opaque application window with no alpha to composite.
-		//
-		// The tint is the theme's own ink rather than a stylesheet literal, which is
-		// the inverse of what the Modern look does - see paletteForeground, whose
-		// reasoning inverts precisely here: with no palette forced on the window
-		// there is no palette left for the desktop theme to disagree with.
-		//
-		// One class IS added, and it names no colour: .system exists so the header
-		// rule can keep the weight it has in Modern. With no class at all both the
-		// rule and the row hairlines fell through to the theme's single separator
-		// colour, which collapsed two deliberate weights into one - measured at
-		// 1.08:1 against the background under Adwaita:dark, which is invisible. The
-		// sheet gives .system nothing but a min-height, so the colour is still the
-		// theme's and only the thickness is ours. The Win32 system look keeps the
-		// same hierarchy by giving the rule and the hairlines two alphas of
-		// COLOR_3DSHADOW.
-		gtk.AddClass(uintptr(win), "system")
-		fg = win.Foreground()
-	} else {
-		// The visual has to be chosen before the window is realised, and the
-		// stylesheet must follow what was actually granted rather than what was
-		// asked for: with no compositor the alpha would composite against black and
-		// every rounded corner would come out as a black notch.
-		fill := "solid"
-		if win.SetTranslucent() {
-			fill = "translucent"
-		}
-		palette := paletteFor(win, req.Theme)
-		gtk.AddClass(uintptr(win), palette, fill)
-		fg = paletteForeground(palette)
-	}
+	// The panel states no palette of its own, which is what "coloured by the
+	// desktop theme" is implemented as: the stylesheet names no colour anywhere,
+	// so the theme paints the window, its labels and its separators.
+	//
+	// One class is added and it names no colour either. .system exists so the
+	// header rule can outweigh the row hairlines: with the resets alone both fell
+	// through to the theme's single separator colour, which collapsed two
+	// deliberate weights into one - measured at 1.08:1 against the background
+	// under Adwaita:dark, which is invisible. The sheet gives .system nothing but
+	// a min-height, so the colour is still the theme's and only the thickness is
+	// ours. The Win32 backend keeps the same hierarchy by giving the rule and the
+	// hairlines two alphas of COLOR_3DSHADOW.
+	gtk.AddClass(uintptr(win), "system")
+
+	// fg is the ink the rasterised weather symbols are tinted with, and it is the
+	// theme's own label colour rather than a literal of ours for the same reason:
+	// the theme paints every label beside the symbols, so nothing else could match
+	// them. req.Theme therefore does not reach the panel at all here - it still
+	// drives the tray icon, and on Windows it still picks a palette.
+	fg := win.Foreground()
 
 	// What licenses reporting a position, and nothing less: a press was handed to
 	// the window manager's move loop at least once during THIS showing, AND the
@@ -372,39 +313,34 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	handedOff := false
 	origin := gui.Point{}
 
-	// The system look needs a second way to establish that origin, because the
-	// obvious gesture in it - dragging the window by its title bar - never reaches
-	// the toolkit at all. The window manager reparents a decorated window and
-	// handles the caption itself, so no button-press-event is emitted, handedOff
-	// stays false, and a panel the user dragged across the screen by its title bar
-	// reported nothing. Measured under Marco: a title-bar drag from 13,43 to
-	// 163,153 wrote no position, while a body drag of the same window did.
+	// A second way to establish that origin is needed, because the most obvious
+	// gesture - dragging the window by its title bar - never reaches the toolkit at
+	// all. The window manager reparents a decorated window and handles the caption
+	// itself, so no button-press-event is emitted, handedOff stays false, and a
+	// panel the user dragged across the screen by its title bar reported nothing.
+	// Measured under Marco: a title-bar drag from 13,43 to 163,153 wrote no
+	// position, while a body drag of the same window did.
 	//
-	// So in that look the window's settled placement is taken as the origin once,
-	// shortly after it is mapped, and everything after that is a move. The delay is
-	// what makes it a settled position rather than a transient one: the manager may
-	// adjust a freshly mapped window, and a baseline read mid-adjustment would make
-	// the adjustment itself look like something the user did. Modern needs none of
-	// this - it has no frame for a manager to move it by, so the press is always
-	// ours to see.
+	// So the window's settled placement is taken as the origin once, shortly after
+	// it is mapped, and everything after that is a move. The delay is what makes it
+	// a settled position rather than a transient one: the manager may adjust a
+	// freshly mapped window, and a baseline read mid-adjustment would make the
+	// adjustment itself look like something the user did.
 	//
 	// The Win32 backend has the same problem and solves it in the same spirit, by
 	// capturing the origin in WM_ENTERSIZEMOVE, which is the caption drag's own
 	// starting message.
-	if system {
-		gtk.After(placeSettle, func() {
-			if closed || handedOff {
-				return
-			}
-			x, y := win.Position()
-			handedOff, origin = true, gui.Point{X: x, Y: y}
-		})
-	}
+	gtk.After(placeSettle, func() {
+		if closed || handedOff {
+			return
+		}
+		x, y := win.Position()
+		handedOff, origin = true, gui.Point{X: x, Y: y}
+	})
 
-	// A press on the panel body starts a window-manager move. The close button
-	// keeps working because it has its own GdkWindow and consumes its own press,
-	// so button-press-event on the toplevel never fires for it - see
-	// gtk.Window.DragOnPress, which is where that is spelled out.
+	// A press on the panel body starts a window-manager move, which is the second
+	// way to drag the panel: the title bar the window manager draws is the first,
+	// and it is the one this handler never sees - see the baseline above.
 	//
 	// Only the FIRST handoff records an origin. A later press happens wherever the
 	// user has already dragged the panel to, so keeping the newest origin would
@@ -426,9 +362,9 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		handedOff, origin = true, gui.Point{X: x, Y: y}
 	})
 
-	// dismiss is the panel's single exit: the × button, Escape, focus loss and the
-	// tray toggle all close it through here, which is the only reason the position
-	// gets reported at all.
+	// dismiss is the panel's single exit: the title bar's close button, Escape,
+	// focus loss and the tray toggle all close it through here, which is the only
+	// reason the position gets reported at all.
 	//
 	// The order inside it is the whole point. The position has to be read while
 	// the window still exists: gtk_widget_destroy takes the GdkWindow with it, and
@@ -527,7 +463,7 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	// it here only was a bug with teeth: after one drag the latch stayed set for
 	// the panel's whole life, so any button held anywhere on the desktop suppressed
 	// a focus-loss close - and Escape, which is dropped rather than deferred, was
-	// swallowed outright, leaving the panel with only its × button. The drag
+	// swallowed outright, leaving the panel with only its title bar. The drag
 	// handler therefore arms the poller below, which clears the latch as soon as
 	// the button comes up whether or not anything is waiting on it.
 	inMove := func() bool {
@@ -557,7 +493,7 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	// Dropping it outright would be wrong for exactly the reason it is wrong
 	// there: focus-out is delivered on the TRANSITION, so a panel that is already
 	// unfocused is never told again unless it is focused first. An unpinned panel
-	// would then sit above whatever the user switched to with only its × button
+	// would then sit above whatever the user switched to with only its title bar
 	// and the tray icon left to close it, which is the opposite of what "closes
 	// when you look away" promised. Honouring it unconditionally would be equally
 	// wrong: the ordinary end of a drag hands the focus straight back, and closing
@@ -565,8 +501,8 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 	var settleDrag func()
 	settleDrag = func() {
 		if closed {
-			// The × button, the tray toggle or the window manager got there
-			// first. No window left to close and no position left to read.
+			// The title bar's close button, the tray toggle or the window manager
+			// got there first. No window left to close and no position left to read.
 			settling, deferred = false, false
 			return
 		}
@@ -603,17 +539,19 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 
 	// Escape always works; losing focus is the convenience path. Both are what
 	// pinning switches off, and both are what a move in progress suspends, which
-	// leaves the tray icon and the window's own close button - the × button in the
-	// Modern look, the title bar's in the system one - as the ways out. So none of
-	// those three may ever consult pinned or inMove. They destroy the panel mid-move
-	// if that is what the user asked for, and that is safe.
+	// leaves the tray icon and the title bar's close button as the ways out. So
+	// none of those three may ever consult pinned or inMove. They destroy the panel
+	// mid-move if that is what the user asked for, and that is safe.
 	//
-	// Focus loss is armed only after the panel has actually held focus once. An
-	// undecorated window is not guaranteed to be given focus when it is mapped,
-	// and without this the first focus-out - which can arrive before the user
-	// has seen anything - closes the panel again immediately. The symptom is a
-	// panel that flickers and vanishes, intermittently, depending on what held
-	// focus at the moment it opened. The Win32 backend has always armed this.
+	// Focus loss is armed only after the panel has actually held focus once,
+	// because a window is not guaranteed to be given focus when it is mapped:
+	// without this the first focus-out - which can arrive before the user has seen
+	// anything - closes the panel again immediately, and the symptom is a panel
+	// that flickers and vanishes, intermittently, depending on what held focus at
+	// the moment it opened. That was measured on a window with no frame, which a
+	// manager is freest to leave unfocused; a framed window is likelier to be given
+	// focus on map, but nothing promises it and the guard costs one bool. The Win32
+	// backend has always armed this.
 	armed := false
 	win.OnEscape(func() {
 		if pinned() {
@@ -673,61 +611,33 @@ func buildForecast(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang, 
 		dismiss()
 	})
 
-	// In the system look the title bar is the way out of the window, so its close
-	// button has to run the panel's own dismissal rather than GTK's default destroy:
-	// the default reports nothing, and with no × button inside the window that would
-	// mean a panel the user dragged somewhere almost never remembers where it was
-	// dropped. Handed dismiss, exactly like the × button, so it closes
-	// unconditionally - pinned or not, mid-move or not.
+	// The title bar's close button is the ordinary way this panel gets closed, so
+	// it has to run the panel's own dismissal rather than GTK's default destroy:
+	// the default reports nothing, which would mean a panel the user dragged
+	// somewhere almost never remembers where it was dropped. It is handed dismiss
+	// bare, with none of the guards Escape and focus loss are wrapped in, because a
+	// close button that asked whether the panel is pinned would be a close button
+	// that does nothing.
 	//
-	// Only in the system look. Modern has no frame, so nothing in it emits
-	// delete-event to begin with; wiring it there anyway would still change what a
-	// close arriving from outside the window - a session shutdown, a wmctrl -c -
-	// does to the look the user is already running, and today it correctly reports
-	// no position, because an unread position is better than a wrong one.
-	if system {
-		win.OnDeleteEvent(dismiss)
-	}
+	// A close arriving from outside the window - a session shutdown, a wmctrl -c -
+	// comes through here too and reports a position as well. That is sound where
+	// the destroy handler is not: delete-event is delivered while the window is
+	// still there to be asked.
+	win.OnDeleteEvent(dismiss)
 
 	scale := win.ScaleFactor()
 
-	page := gtk.NewVBox(pageGapY)
+	// One child, so there is nothing to space. The box is here because .page is
+	// where the panel's padding is stated.
+	page := gtk.NewVBox(0)
 	gtk.AddClass(page, "page")
 	win.Add(page)
 
-	// The close row is the Modern look's stand-in for a title bar and belongs to it
-	// alone. In the system look there is a real title bar with a real close button,
-	// wired above to the same dismiss.
-	if !system {
-		gtk.PackStart(page, closeRow(dismiss), false, false, 0)
-	}
 	gtk.PackStart(page, forecastTable(data, req.Units, req.WindUnit, l, scale, fg), false, false, 0)
 
 	placePanel(win, page, at, req.At)
 	forecastWindow = win
 	forecastDismiss = dismiss
-}
-
-// closeRow is the Modern look's title-bar substitute: nothing but the × button,
-// pushed to the trailing edge of the sheet. It is not packed at all in the system
-// look, which has the real thing.
-//
-// The button is packed expanding and filling with its own halign set, rather
-// than packed non-expanding after a spacer label. A spacer would be one more
-// label for the desktop theme to state a colour and a padding on, and there is
-// no summary text left for it to hide behind.
-//
-// It is handed the panel's dismiss closure rather than the window, because it
-// closes unconditionally - pinned or not, it is the only exit left inside the
-// window - and because closing has to report the final position, which a bare
-// Destroy would skip.
-func closeRow(dismiss func()) uintptr {
-	row := gtk.NewHBox(0)
-	btn := gtk.NewButton(closeGlyph, dismiss)
-	gtk.AddClass(btn, "close")
-	gtk.SetHAlign(btn, gtk.AlignEnd)
-	gtk.PackStart(row, btn, true, true, 0)
-	return row
 }
 
 // forecastTable builds the table: captions, a rule, then one row per day with a
@@ -794,8 +704,8 @@ func dataCell(text string, col int) uintptr {
 // symbolWidget rasterises the Weather Icons glyph for a condition code into a
 // GtkImage.
 //
-// The symbol is monochrome and tinted with the palette's foreground on purpose:
-// it was picked over the colour artwork, and a glyph drawn in the same ink as
+// The symbol is monochrome and tinted with the theme's own ink on purpose: it
+// was picked over the colour artwork, and a glyph drawn in the same ink as
 // the numbers beside it belongs to the table rather than sitting on top of it.
 // The glyph is rasterised at scale times the layout size and the GtkImage is
 // told the scale, so a HiDPI screen draws real pixels instead of an upscale.
@@ -899,7 +809,7 @@ func inside(r gtk.Rect, x, y int) bool {
 // work area. The area is not necessarily the one the position was saved on: a
 // resolution change, a dock appearing or a monitor being rearranged can all
 // leave a position that was legitimate when it was written with most of the
-// panel hanging off an edge, and a panel whose × button is off-screen while it
+// panel hanging off an edge, and a panel whose title bar is off-screen while it
 // is pinned cannot be closed from the window at all.
 //
 // The lower bounds are applied last on purpose. When the panel is larger than
@@ -949,55 +859,4 @@ func corner(px, py, w, h int, area gtk.Rect) (int, int) {
 		y = area.Y
 	}
 	return x, y
-}
-
-// paletteFor picks the panel palette. For an explicit setting it honours the
-// user; for "auto" it asks the desktop theme which way round it draws text - a
-// light foreground means a dark theme. That is more reliable than the GTK
-// prefer-dark flag, which stays false under themes that are simply dark, such
-// as BlackMATE.
-//
-// Asked in the Modern look only. The system look states no palette, so the theme
-// setting does not reach the panel there at all - it still drives the tray icon
-// and it still drives this, which is why it is neither removed nor renamed.
-func paletteFor(win gtk.Window, theme string) string {
-	switch theme {
-	case "dark":
-		return "dark"
-	case "light":
-		return "light"
-	}
-	if luminance(win.Foreground()) > 0.5 {
-		return "dark"
-	}
-	return "light"
-}
-
-// paletteForeground is the ink the palette draws cell text in, and therefore the
-// colour a rasterised symbol has to be tinted with to look like part of the
-// table.
-//
-// The value is taken from the stylesheet rather than from win.Foreground(),
-// which is what the DESKTOP theme draws text in. Those two disagree whenever the
-// user forces a palette the desktop does not share - a dark panel on a light
-// theme would otherwise get a near-black symbol on a near-black row. Both
-// literals below are the `label { color: ... }` declarations in style_linux.go
-// and the text members of the Win32 palettes.
-//
-// WHICH IS THE MODERN LOOK'S ANSWER, and the system look's is the opposite one:
-// win.Foreground(), taken straight from the theme. That is not an inconsistency,
-// it is this function's own reasoning applied to a case that inverts it. The
-// mismatch guarded against above needs a palette that was forced on the window,
-// and the system look forces none - it adds no palette class, the theme paints the
-// labels, and so the theme's ink is what the symbol beside them has to match. Ask
-// this only where a palette class was actually applied.
-func paletteForeground(palette string) color.NRGBA {
-	if palette == "dark" {
-		return color.NRGBA{R: 0xf2, G: 0xf4, B: 0xf7, A: 0xff} // .dark label
-	}
-	return color.NRGBA{R: 0x14, G: 0x16, B: 0x1a, A: 0xff} // .light label
-}
-
-func luminance(c color.NRGBA) float64 {
-	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
 }

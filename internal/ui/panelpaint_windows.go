@@ -4,27 +4,32 @@ package ui
 
 // Everything the forecast panel draws with.
 //
-// THE ONE RULE THAT SHAPES THIS FILE: GDI must never touch the panel surface.
-// Every GDI drawing call writes the R, G and B bytes of a 32bpp DIB and leaves
-// the fourth byte exactly as it found it. On a surface whose alpha is
-// meaningful that produces shapes and glyphs in the right colour with alpha 0 -
-// invisible content on a window that is otherwise pixel perfect, which is the
-// single most likely way this code can look broken.
+// THE RULE THAT SHAPES THIS FILE: GDI must never touch the panel surface. Every
+// GDI drawing call writes the R, G and B bytes of a 32bpp DIB and leaves the
+// fourth byte exactly as it found it, so on a surface whose alpha is meaningful
+// it produces shapes and glyphs in the right colour with alpha 0 - invisible
+// content on a window that is otherwise pixel perfect.
 //
 // So the panel is composed in pure Go into a premultiplied image.RGBA and
 // copied into the DIB at the end. GDI is used for exactly one thing: turning a
 // string into glyph coverage, in a SEPARATE scratch DIB that is white on black
 // and therefore has no alpha to destroy.
+//
+// The alpha stopped being meaningful when the panel stopped being a layered
+// window: the surface now reaches the screen through a BitBlt that reads three
+// bytes of every four. What is left is a composition pipeline nobody would write
+// for an opaque window, kept because it works and because its arithmetic is
+// shared with the GTK backend - see forecast_windows.go. The rule stands with it:
+// the moment a DrawText lands on this surface, the file no longer holds together
+// as one thing.
 
 import (
 	"image"
 	"image/color"
-	"image/draw"
 	"syscall"
 	"unsafe"
 
 	"github.com/lxn/win"
-	"golang.org/x/image/vector"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,7 +37,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // surface is a top-down 32bpp BGRA DIB section selected into a memory DC: the
-// bitmap UpdateLayeredWindow reads, and the bitmap GDI text lands in.
+// bitmap WM_PAINT blits from, and the bitmap GDI text lands in.
 //
 // Top-down (a NEGATIVE BiHeight) is not cosmetic. It makes row 0 the top row so
 // the byte indexing matches image.RGBA with no vertical flip, and it is a hard
@@ -106,10 +111,9 @@ func (s *surface) clear() {
 
 // blitFrom copies a premultiplied image.RGBA into the DIB.
 //
-// image.RGBA is ALREADY premultiplied, which is exactly the format
-// UpdateLayeredWindow documents as mandatory for AC_SRC_ALPHA. The only
-// difference between the two buffers is channel order: GDI's 32bpp BI_RGB
-// layout is B, G, R, A in memory.
+// The only difference between the two buffers is channel order: GDI's 32bpp
+// BI_RGB layout is B, G, R, A in memory. The alpha byte is carried across for
+// completeness rather than for a reader - see the head of this file.
 func (s *surface) blitFrom(src *image.RGBA) {
 	for y := 0; y < s.h; y++ {
 		so := src.PixOffset(0, y)
@@ -126,18 +130,15 @@ func (s *surface) blitFrom(src *image.RGBA) {
 }
 
 // blitTo copies the whole surface onto a device context at its origin, which is
-// how the composed image reaches an ORDINARY window - the forecast panel's system
-// look, where there is no WS_EX_LAYERED and therefore no UpdateLayeredWindow to
-// hand it to. The destination is the window's client area, obtained from
-// BeginPaint inside WM_PAINT.
+// how the composed image reaches the screen. The destination is the window's
+// client area, obtained from BeginPaint inside WM_PAINT.
 //
 // A plain SRCCOPY needs no vertical flip and no attention to alpha, and both facts
 // come from how newSurface built the DIB. Top-down, so row 0 is the top row in the
 // destination as well as in the source. BI_RGB at 32bpp declares no alpha channel,
 // so GDI reads the B, G and R bytes and ignores the fourth - which is exactly
-// right here, because the sheet under an ordinary window is opaque and the alpha
-// the composition wrote is 255 everywhere it matters and meaningless everywhere
-// else.
+// right here, because the sheet is opaque and the alpha the composition wrote is
+// 255 everywhere it matters and meaningless everywhere else.
 //
 // This does not breach the rule at the top of this file. GDI is READING the
 // surface, not drawing into it; nothing here can touch a byte of it.
@@ -152,82 +153,17 @@ func (s *surface) blitTo(dc win.HDC) bool {
 // Shapes
 // ---------------------------------------------------------------------------
 
-// kappa is the control-point distance that makes a cubic Bezier approximate a
-// quarter circle to within about 0.02% of the radius. A single QUADRATIC with
-// the corner as its control point is the obvious shortcut and is wrong by 6% of
-// the radius, which at r=14 is a visible 0.85px of extra squareness.
-const kappa = 0.5522847498307936
-
-// roundRectPath appends a rounded rectangle to z, clockwise from the start of
-// the top edge.
-func roundRectPath(z *vector.Rasterizer, x, y, w, h, r float32) {
-	if r < 0 {
-		r = 0
-	}
-	if r*2 > w {
-		r = w / 2
-	}
-	if r*2 > h {
-		r = h / 2
-	}
-	c := r * kappa
-
-	z.MoveTo(x+r, y)
-	z.LineTo(x+w-r, y)
-	z.CubeTo(x+w-r+c, y, x+w, y+r-c, x+w, y+r)
-	z.LineTo(x+w, y+h-r)
-	z.CubeTo(x+w, y+h-r+c, x+w-r+c, y+h, x+w-r, y+h)
-	z.LineTo(x+r, y+h)
-	z.CubeTo(x+r-c, y+h, x, y+h-r+c, x, y+h-r)
-	z.LineTo(x, y+r)
-	z.CubeTo(x, y+r-c, x+r-c, y, x+r, y)
-	z.ClosePath()
-}
-
-// roundRect fills an antialiased rounded rectangle into a premultiplied buffer.
+// paintRect fills an axis-aligned rectangle: the sheet, the table's rule and its
+// row separators.
 //
-// This is the whole answer to "how does the panel get rounded corners".
-// SetWindowRgn + CreateRoundRectRgn is a 1-bit clip: staircase corners that
-// fight the per-pixel alpha the surface already carries, and the system takes
-// ownership of the region handle. DWMWA_WINDOW_CORNER_PREFERENCE rounds the
-// DWM-drawn window FRAME, and a layered WS_POPUP has no frame. GDI's RoundRect
-// compiles and leaves the alpha byte at whatever the brush wrote, which is zero
-// - a completely transparent card.
-// roundRect fills a rounded rectangle. z is a rasterizer to reuse; pass nil to
-// have one allocated for the call.
+// Every shape the panel has is on the pixel grid and square-cornered, so this
+// straight premultiplied source-over is the whole of the panel's geometry. There
+// is nothing here for a rasteriser to antialias and this loop cannot fail to be
+// exact.
 //
-// Reusing it is not a micro-optimisation. The whole sheet is drawn through here on
-// every repaint, and a repaint happens on each hover transition of the close
-// button, inside the window procedure that owns the panel's message queue. Measured
-// on a 620x330 surface: 6.15 ms and 1.64 MB per call with a fresh rasterizer
-// against 0.85 ms and no allocation with a reused one - and at 150% DPI the surface
-// is over twice the pixels.
-func roundRect(z *vector.Rasterizer, dst *image.RGBA, x, y, w, h int32, r float32, c color.RGBA) {
-	if w <= 0 || h <= 0 || c.A == 0 || !fitsIn(dst, x, y, w, h) {
-		return
-	}
-	if z == nil {
-		z = vector.NewRasterizer(int(w), int(h))
-	} else {
-		z.Reset(int(w), int(h))
-	}
-	z.DrawOp = draw.Over
-	roundRectPath(z, 0, 0, float32(w), float32(h), r)
-	z.Draw(dst, image.Rect(int(x), int(y), int(x+w), int(y+h)), image.NewUniform(c), image.Point{})
-}
-
-// paintRect fills an axis-aligned rectangle: the table's rule and its row
-// separators, and the page background of the opaque fallback.
-//
-// It is a straight premultiplied source-over rather than a call to roundRect
-// with a zero radius, because the shapes it draws are one pixel tall and
-// exactly on the pixel grid. There is nothing for a rasteriser to antialias
-// there, a degenerate Bezier at every corner is a needless question to ask of
-// one, and this loop cannot fail to be exact.
-//
-// Unlike roundRect it CLIPS rather than declining to draw: a rule is the full
-// width of the card and a rounding error of one pixel at the far edge would
-// otherwise silently lose the whole line.
+// It CLIPS rather than declining to draw: a rule is the full width of the sheet
+// and a rounding error of one pixel at the far edge would otherwise silently lose
+// the whole line.
 func paintRect(dst *image.RGBA, x, y, w, h int32, c color.RGBA) {
 	if w <= 0 || h <= 0 || c.A == 0 {
 		return
@@ -254,20 +190,6 @@ func paintRect(dst *image.RGBA, x, y, w, h int32, c color.RGBA) {
 			row += 4
 		}
 	}
-}
-
-// fitsIn reports whether a shape lies wholly inside dst.
-//
-// The rasteriser maps its own origin to the destination rectangle's top-left
-// corner and does no clipping at all, so a shape that hangs off the edge would
-// index past the end of dst.Pix and panic - inside a window procedure, which is
-// a C callback, so the panic would take the process with it. Every rectangle
-// this file is handed is provably inside the panel; this is the belt to that
-// braces, and it fails by not drawing rather than by crashing.
-func fitsIn(dst *image.RGBA, x, y, w, h int32) bool {
-	b := dst.Bounds()
-	return int(x) >= b.Min.X && int(y) >= b.Min.Y &&
-		int(x+w) <= b.Max.X && int(y+h) <= b.Max.Y
 }
 
 // premul converts a straight (r,g,b,a) design colour into the premultiplied
@@ -315,10 +237,10 @@ func panelFont(pt, weight, dpi int32) win.HFONT {
 // leading is 45% of its em, very much more than that.
 //
 // LfQuality is ANTIALIASED_QUALITY rather than the CLEARTYPE_QUALITY the rest of
-// this package asks for. Subpixel antialiasing cannot be composited against an
-// unknown background, so ClearType is unavailable on a layered window under every
-// technique; asking for grayscale explicitly is what keeps the coverage
-// arithmetic in compositeMask exact.
+// this package asks for. What comes back from the mask is read as coverage, one
+// value per pixel, and subpixel antialiasing answers three; asking for grayscale
+// explicitly is what keeps the arithmetic in compositeMask exact rather than
+// approximate.
 //
 // face is passed rather than assumed because this is also how the embedded
 // weather typeface is requested - internal/fonts has registered it with GDI
@@ -429,11 +351,6 @@ func utf16Of(s string) []uint16 {
 
 // drawTextGroup renders every run in one colour group and composites the result
 // into dst at (r,g,b), fully opaque.
-//
-// Full opacity is deliberate and is what the GTK panel produces: an opaque
-// label over a card whose own background is 82% alpha, so the glyphs read
-// crisply against whatever is behind the window while the card stays
-// translucent.
 //
 // The mask trick: white text on a black surface with BkMode TRANSPARENT leaves
 // each channel byte at exactly coverage*255, because dst = 255*cov +

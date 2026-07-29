@@ -6,13 +6,34 @@ package ui
 //
 // The CONTENT is a plain five-column table: one header row, a rule, then seven
 // data rows separated by hairlines. No summary header and no cards - that layout
-// was tried and reverted. The CHROME around it comes in two looks, described
-// below; what they have in common and never trade away is: above other windows,
-// off the taskbar, placed at the work-area corner nearest the click - or at the
-// position the caller remembers - draggable by its body, and dismissed by
-// Escape, by focus loss, or by a close button.
+// was tried and reverted.
 //
-// While the request is PINNED the first two dismissals are switched off, so the
+// The WINDOW is an ordinary application window, coloured by the desktop, kept
+// above the others, off the taskbar, placed at the work-area corner nearest the
+// click - or at the position the caller remembers - and draggable by its body as
+// well as by its caption.
+//
+//	Window style:   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU. A title bar with
+//	                the window manager's own close button, square corners,
+//	                opaque. WS_SYSMENU is what puts the close button in the
+//	                caption; WS_CAPTION alone draws a bar with nothing in it.
+//	Extended style: WS_EX_TOPMOST, and deliberately NOT WS_EX_TOOLWINDOW, which
+//	                was here and was wrong. That flag draws the thin
+//	                palette-window caption with a small close button, so the one
+//	                control this window offers did not look like the one every
+//	                other window on the desktop offers. The caption is now the
+//	                ordinary one, the same the About box gets. WS_EX_TOOLWINDOW
+//	                was also what kept the panel off the taskbar and out of
+//	                Alt+Tab; an invisible owner window does that now instead -
+//	                see ensurePanelOwner.
+//	Colours:        GetSysColor, with one documented exception that is a Windows
+//	                wart rather than a choice - see panelPaletteSystem.
+//	Closing:        the caption's close button, Escape, focus loss, or another
+//	                click on the tray icon. Every one of them arrives as
+//	                WM_CLOSE, which is what makes the position report a single
+//	                path.
+//
+// While the request is PINNED the middle two dismissals are switched off, so the
 // close button and another click on the tray icon are the only ways out. The
 // policy is asked of gui.Forecast.Pinned at the moment of each event, never
 // cached: the user can uncheck the box while this very panel is on screen.
@@ -23,81 +44,28 @@ package ui
 // way a GtkGrid of expanding cells distributes them. The point of the two files
 // is that the two platforms look like one product.
 //
-// How it is built, in one line: the whole panel is composed in pure Go into a
-// premultiplied image.RGBA, GDI is used for exactly one thing (turning strings
-// into glyph coverage, in a scratch bitmap), the result is copied into a
-// top-down 32bpp DIB section, and that DIB is what reaches the screen. GDI never
-// touches the panel surface, so GDI can never destroy its alpha. See
-// panelpaint_windows.go for why that rule exists, and do not reach for DrawText
-// on the surface itself while changing this layout: it writes R, G and B and
-// leaves A at zero, which is a pixel-perfect panel with invisible text.
+// HOW THE PIXELS GET THERE, and why it is not what anyone would write for this
+// window today. The whole panel is composed in pure Go into a premultiplied
+// image.RGBA, GDI is used for exactly one thing (turning strings into glyph
+// coverage, in a scratch bitmap), the result is copied into a top-down 32bpp DIB
+// section, and WM_PAINT BitBlts that DIB into the client area. That pipeline is
+// inherited: the panel used to be a WS_EX_LAYERED sheet fed by
+// UpdateLayeredWindow, which reads a premultiplied bitmap whose alpha any GDI
+// call would have destroyed - see panelpaint_windows.go. Nothing reads the alpha
+// channel any more, so the composition is history rather than a requirement, and
+// drawing the table with GDI straight into the paint DC would do the same job.
+// It is kept because it works and because its arithmetic is the GTK side's; if it
+// is ever replaced, replace it whole rather than half.
 //
-// TWO LOOKS, ONE COMPOSITION. gui.Forecast.Appearance chooses between them once,
-// in newPanel, and nothing re-reads it afterwards. What differs is the window
-// the image lives in, where the colours come from, and how the image gets onto
-// the screen. The layout arithmetic, the fonts, every metric and the whole
-// compositing pipeline are the same code in both, which is the point: the panel
-// is the same product either way.
-//
-// MODERN - the default, and what this panel has always been.
-//
-//	Window style:   WS_POPUP. No WS_CAPTION, no WS_BORDER, no WS_THICKFRAME.
-//	Extended style: WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST.
-//	                NOT WS_EX_NOACTIVATE, which is the tempting wrong flag: it
-//	                stops the window becoming foreground, so it never holds the
-//	                keyboard focus, so Escape never arrives.
-//	Content:        one UpdateLayeredWindow call. There is no WM_PAINT handler
-//	                for it and none is wanted - the system keeps the surface and
-//	                repaints it itself.
-//	Colours:        the app's own palette, translucent with rounded corners
-//	                where the display can composite per-pixel alpha.
-//	Closing:        the × the panel draws into its own top row, because a window
-//	                with no title bar has no close button of its own.
-//
-// SYSTEM LOOK - an ordinary application window, coloured by the desktop.
-//
-//	Window style:   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU. A title bar with
-//	                the window manager's own close button, square corners,
-//	                opaque. WS_SYSMENU is what puts the close button in the
-//	                caption; WS_CAPTION alone draws a bar with nothing in it.
-//	Extended style: WS_EX_TOPMOST, and deliberately NOT WS_EX_LAYERED - see
-//	                below - nor WS_EX_TOOLWINDOW, which was here and was wrong.
-//	                That flag draws the thin palette-window caption with a small
-//	                close button, so the one control this window offers did not
-//	                look like the one every other window on the desktop offers.
-//	                The caption is now the ordinary one, the same the About box
-//	                gets. WS_EX_TOOLWINDOW was also what kept the panel off the
-//	                taskbar and out of Alt+Tab; an invisible owner window does
-//	                that now instead - see ensurePanelOwner.
-//	Content:        the same composed DIB, BitBlt to the client area from a
-//	                WM_PAINT handler.
-//	Colours:        GetSysColor, with one documented exception that is a Windows
-//	                wart rather than a choice - see panelPaletteSystem.
-//	Closing:        the caption's close button. It arrives here as WM_CLOSE like
-//	                every other dismissal, so it reports the position too.
-//
-// WHY THE LAYERED PATH IS NOT SIMPLY KEPT AND A CAPTION ADDED TO IT.
-// UpdateLayeredWindow requires WS_EX_LAYERED - without it the call fails with
-// ERROR_INVALID_PARAMETER - and what it hands the system is the WHOLE WINDOW:
-// pptDst is the window's position on screen and psize the window's size, so
-// every pixel of the window, non-client area included, would have to come out of
-// the composed bitmap. The caption is drawn by DefWindowProc and the DWM into
-// the window's own device context, which is never that bitmap, so there is
-// nowhere for a title bar to appear. Hence a second delivery path rather than a
-// flag on the first - and nothing is lost by it, because an opaque sheet has no
-// use for per-pixel alpha and BitBlt out of the same DIB puts the identical
-// pixels on the screen.
-//
-// Dragging:       WM_LBUTTONDOWN hands the press to the system's own move loop.
-//                 NOT a WM_NCHITTEST that answers HTCAPTION, which looks like
-//                 the tidier trick and destroys the close button - panelWndProc
-//                 spells the reason out. That loop PUMPS THIS THREAD'S QUEUE
-//                 while it runs, so every dismissal path has to be re-entrancy
-//                 safe for its duration - see the moving flag. In the system
-//                 look the caption starts the very same loop on its own, without
-//                 this code seeing a press at all, which is why the loop's END
-//                 is settled from run's message pump and not only from
-//                 WM_LBUTTONDOWN.
+// Dragging:       WM_LBUTTONDOWN hands a press on the body to the system's own
+//                 move loop. NOT a WM_NCHITTEST that answers HTCAPTION, which
+//                 looks like the tidier trick - panelWndProc spells the reason
+//                 out. That loop PUMPS THIS THREAD'S QUEUE while it runs, so
+//                 every dismissal path has to be re-entrancy safe for its
+//                 duration - see the moving flag. The caption starts the very
+//                 same loop on its own, without this code seeing a press at all,
+//                 which is why the loop's END is settled from run's message pump
+//                 and not only from WM_LBUTTONDOWN.
 
 import (
 	"image"
@@ -116,7 +84,6 @@ import (
 	"github.com/JastRedPanda/Nimbus/internal/i18n"
 	"github.com/JastRedPanda/Nimbus/internal/weather"
 	"github.com/lxn/win"
-	"golang.org/x/image/vector"
 )
 
 // Layout, in the same units the GTK side uses: logical pixels at 96 DPI, scaled
@@ -125,24 +92,19 @@ import (
 const (
 	panelWidthPt = 620 // forecastWidth
 	panelEdgeGap = 12  // panelMargin: clearance from the work-area edges
-	pagePad      = 14  // .page padding, sides and bottom
-	// The top is tighter than the rest so the close affordance can be a
-	// comfortable target without making the panel taller. The glyph occupies
-	// the space the padding gives up, so the panel does not read as cramped.
-	pagePadTop    = 6
-	sheetRadiusPt = 14 // #nimbus-forecast.translucent border-radius
+	pagePad      = 14  // .page padding: sides and bottom in the stylesheet
+	// The stylesheet's fourth value, the smaller padding it puts at the top of
+	// the page. layoutTable spends it at the BOTTOM instead and starts the table
+	// pagePad down from the top of the client area, so the split is the mirror of
+	// the stylesheet's - while the panel's height, which is what the shared
+	// metrics are really about, is the same sum.
+	pagePadTop = 6
 
-	pageGapY = 2  // page VBox spacing: the close row to the table
-	rowGapY  = 6  // grid row spacing
-	colGapX  = 18 // grid column spacing
-
-	closePadX     = 9 // .close padding
-	closePadY     = 0
-	closeRadiusPt = 8 // .close border-radius
+	rowGapY = 6  // grid row spacing
+	colGapX = 18 // grid column spacing
 
 	theadPt = 11 // .thead font-size, weight 600
 	cellPt  = 11 // .cell font-size
-	closePt = 15 // .close font-size
 
 	// symbolPt is the size of the weather symbol in layout PIXELS, not in
 	// typographic points - it is the value fonts.Glyph is handed on the GTK
@@ -183,101 +145,42 @@ var colAlign = [numCols]uint32{
 // family, so the name is repeated here and verified at runtime - see makeFonts.
 const weatherIconsFace = "Weather Icons"
 
-// closeGlyph is the panel's own close affordance IN MODERN ONLY. With no title
-// bar there is no system close button, so the panel supplies one, exactly as the
-// GTK panel does. The system look draws no glyph and reserves no room for one:
-// its caption already carries a close button, and two would be one too many.
-const closeGlyph = "×" // MULTIPLICATION SIGN
-
 const panelClassName = "NimbusForecastPanel"
 
-// The two window shapes, named rather than spelled out at the CreateWindowEx
-// call, because panel.frame has to be asked about the very styles the window was
+// The window's shape, named rather than spelled out at the CreateWindowEx call,
+// because panel.frame has to be asked about the very styles the window was
 // created with - BOTH of them. Ask about different ones and the client area comes
 // out the wrong size, which shows up either as a caption eating the header row or
 // as a strip of uninitialised memory along the bottom, neither of which looks
 // like the sizing bug it is.
 //
-// The system look is deliberately NOT resizable: no WS_THICKFRAME and no
-// WS_MAXIMIZEBOX. The layout is fixed-width by design, and those flags would
-// also hand the window Aero Snap, which would fling a 620-unit panel across half
-// the screen the first time a user dragged it near an edge.
+// Deliberately NOT resizable: no WS_THICKFRAME and no WS_MAXIMIZEBOX. The layout
+// is fixed-width by design, and those flags would also hand the window Aero Snap,
+// which would fling a 620-unit panel across half the screen the first time a user
+// dragged it near an edge.
 const (
-	panelStyleModern   = uint32(win.WS_POPUP)
-	panelExStyleModern = uint32(win.WS_EX_LAYERED | win.WS_EX_TOOLWINDOW | win.WS_EX_TOPMOST)
-
-	panelStyleSystem   = uint32(win.WS_OVERLAPPED | win.WS_CAPTION | win.WS_SYSMENU)
-	panelExStyleSystem = uint32(win.WS_EX_TOPMOST)
+	panelStyle   = uint32(win.WS_OVERLAPPED | win.WS_CAPTION | win.WS_SYSMENU)
+	panelExStyle = uint32(win.WS_EX_TOPMOST)
 )
 
 // ---------------------------------------------------------------------------
 // Palette
 // ---------------------------------------------------------------------------
 
-// panelPalette is one of the four palettes style_linux.go keeps: dark or light,
-// translucent or solid. Which pair is used is decided at runtime, not assumed -
-// see panel.show.
+// panelPalette is the panel's colours, premultiplied and ready to composite.
+// They are the desktop's, not the app's - see panelPaletteSystem.
 //
 // There is no separate card colour because there is no card. The window IS the
-// sheet: one background, one radius, and pagePad of padding inside it, which is
-// exactly what `#nimbus-forecast.translucent` plus `.page` states.
+// sheet: one background with pagePad of padding inside it, which is what `.page`
+// states on the GTK side.
 type panelPalette struct {
-	sheet color.RGBA // #nimbus-forecast background-color, premultiplied
-	// radiusPt is the sheet's corner radius in layout points. Zero in the solid
-	// palettes: the GTK sheet asks for a radius only on its translucent
-	// classes, because a rounded corner over a background that cannot be
-	// composited is a notch of whatever is behind it.
-	radiusPt  int
-	rule      color.RGBA // .rule background, under the captions
-	sep       color.RGBA // separator background, between data rows
-	hoverFill color.RGBA // .close:hover background
-	text      [3]uint8   // label color, the cells and the symbols
-	thead     [3]uint8   // .thead color, also .close
+	sheet color.RGBA // the client area's background, premultiplied
+	rule  color.RGBA // .rule background, under the captions
+	sep   color.RGBA // separator background, between data rows
+	text  [3]uint8   // label color, the cells and the symbols
+	thead [3]uint8   // .thead color
 }
 
-// panelPaletteFor builds a palette. translucent selects the halves of the GTK
-// sheet whose colours carry alpha.
-func panelPaletteFor(dark, translucent bool) panelPalette {
-	if dark {
-		p := panelPalette{
-			sheet:     premul(28, 31, 38, 255),   // #1c1f26
-			rule:      premul(255, 255, 255, 71), // rgba(255,255,255,0.28)
-			sep:       premul(255, 255, 255, 26), // rgba(255,255,255,0.10)
-			hoverFill: premul(255, 255, 255, 26), // rgba(255,255,255,0.10)
-			text:      [3]uint8{0xf2, 0xf4, 0xf7},
-			thead:     [3]uint8{0x9a, 0xa3, 0xb0},
-		}
-		if translucent {
-			p.sheet = premul(28, 31, 38, 245) // rgba(28,31,38,0.96)
-			p.radiusPt = sheetRadiusPt
-		}
-		return p
-	}
-	p := panelPalette{
-		sheet:     premul(255, 255, 255, 255), // #ffffff
-		rule:      premul(0, 0, 0, 61),        // rgba(0,0,0,0.24)
-		sep:       premul(0, 0, 0, 26),        // rgba(0,0,0,0.10)
-		hoverFill: premul(0, 0, 0, 20),        // rgba(0,0,0,0.08)
-		text:      [3]uint8{0x14, 0x16, 0x1a},
-		thead:     [3]uint8{0x5b, 0x64, 0x72},
-	}
-	if translucent {
-		p.sheet = premul(255, 255, 255, 250) // rgba(255,255,255,0.98)
-		p.radiusPt = sheetRadiusPt
-	}
-	return p
-}
-
-// panelPaletteSystem builds the palette for the system look: the desktop's own
-// colours, so the panel matches the settings and About windows and everything
-// else on the screen instead of carrying the app's design into a window that has
-// stopped pretending to be a floating sheet.
-//
-// radiusPt stays 0 and hoverFill stays transparent. There are no rounded corners
-// in this look and no close box to highlight, and leaving both at their zero
-// values means paint() takes the square-corner path and roundRect declines the
-// hover pill on its own alpha check rather than on a second flag.
-//
 // highContrastOn reports whether a high contrast scheme is active.
 //
 // It is asked before the dark-apps switch: a high contrast scheme is expressed
@@ -293,6 +196,11 @@ func highContrastOn() bool {
 	return hc.DwFlags&win.HCF_HIGHCONTRASTON != 0
 }
 
+// panelPaletteSystem builds the panel's palette out of the desktop's own
+// colours, so it matches the settings and About windows and everything else on
+// the screen instead of carrying the app's own design into a window whose frame
+// the desktop paints.
+//
 // THE ONE WART, and the reason this is not four lines of GetSysColor.
 // GetSysColor predates dark mode entirely: it answers from the classic colour
 // scheme, the one SetSysColors and High Contrast drive, and it was never wired
@@ -319,14 +227,12 @@ func highContrastOn() bool {
 // dark, so without this check the dark branch would swallow it.
 func panelPaletteSystem(dark bool) panelPalette {
 	if dark {
-		// The colours the rest of the program paints on a dark Windows, NOT the
-		// app's own Modern palette. That is what used to be here, and it was
-		// wrong in a way a screenshot showed at once: Modern's sheet is #1c1f26,
-		// a near-black with a blue cast, so the panel sat visibly darker and
-		// cooler than the About window next to it. This look is supposed to
-		// disappear into the desktop, and on a dark desktop the closest thing to
-		// the desktop this program can honestly claim is what it paints its other
-		// windows with.
+		// The colours the rest of the program paints on a dark Windows. The panel
+		// is supposed to disappear into the desktop, and on a dark desktop the
+		// closest thing to the desktop this program can honestly claim is what it
+		// paints its other windows with. A palette of its own is what used to be
+		// here, and a screenshot showed it up at once: the panel sat visibly
+		// darker and cooler than the About window next to it.
 		//
 		// Asked from darkmode_windows.go rather than written out here, because
 		// About paints from the same constants - see the note there for why they
@@ -336,11 +242,10 @@ func panelPaletteSystem(dark bool) panelPalette {
 		hr, hg, hb := refRGB(darkTextDim)
 		return panelPalette{
 			sheet: premul(sr, sg, sb, 255),
-			// The two separator weights are the Modern dark palette's, and they
-			// stay: 0.28 and 0.10 of white are a RELATIVE statement about which
-			// line is the header rule and which is a row hairline, not a colour
-			// borrowed from a look this window is not in. They read the same over
-			// #2d2d2d as over #1c1f26.
+			// 0.28 and 0.10 of white, which is a RELATIVE statement about which
+			// line is the header rule and which is a row hairline rather than a
+			// colour of the app's own. The pair reads the same over any dark
+			// surface, so it needs nothing from the theme.
 			rule:  premul(255, 255, 255, 71),
 			sep:   premul(255, 255, 255, 26),
 			text:  [3]uint8{tr, tg, tb},
@@ -357,9 +262,9 @@ func panelPaletteSystem(dark bool) panelPalette {
 		sheet: premul(wr, wg, wb, 255),
 		// COLOR_3DSHADOW is the theme's own divider shade - the line an etched
 		// border is drawn with - which is what the header rule is. The hairlines
-		// between data rows keep the same colour at the share of it the Modern
-		// palette gives them, 0.10 of 0.28, so the two weights stay distinguishable
-		// instead of collapsing into one flat grid.
+		// between data rows keep the same colour at the share of it the dark
+		// branch above gives them, 0.10 of 0.28, so the two weights stay
+		// distinguishable instead of collapsing into one flat grid.
 		rule:  premul(sr, sg, sb, 255),
 		sep:   premul(sr, sg, sb, 91), // 0.10/0.28 of the rule
 		text:  [3]uint8{tr, tg, tb},
@@ -476,17 +381,15 @@ type rowGeom struct {
 }
 
 type panelGeom struct {
-	sheet    win.RECT
-	closeBox win.RECT
-	head     [numCols]win.RECT
-	rule     win.RECT
-	rows     []rowGeom
+	sheet win.RECT
+	head  [numCols]win.RECT
+	rule  win.RECT
+	rows  []rowGeom
 }
 
 type panelFonts struct {
 	thead  win.HFONT
 	cell   win.HFONT
-	close  win.HFONT
 	symbol win.HFONT // 0 when the Weather Icons face is not usable
 }
 
@@ -495,8 +398,6 @@ type panelFonts struct {
 type panelMetrics struct {
 	theadH int32
 	cellH  int32
-	closeH int32
-	closeW int32
 	// symbolPx is the symbol's box, and 0 when there is no symbol font. It is
 	// the row's floor the way the GtkImage's height is on the GTK side.
 	symbolPx int32
@@ -517,19 +418,13 @@ type panel struct {
 	// function-valued field exists to prevent.
 	req gui.Forecast
 
-	// sysLook is the appearance decided ONCE, in newPanel, from
-	// req.Appearance. Every branch in this file reads this and never the string:
-	// an unrecognised value has to behave as modern, and one switch that says so
-	// is easier to keep honest than a comparison repeated a dozen times.
-	sysLook bool
-	// dark says draw dark, and the two looks answer it differently on purpose -
-	// see newPanel.
+	// dark says draw dark, and it is the DESKTOP's answer rather than the theme
+	// option's - see newPanel.
 	dark bool
 	pal  panelPalette
 	dpi  int32
 
-	// frameW and frameH are the non-client overhead of this look, measured once
-	// in build. Zero in Modern; the caption and borders in the system look.
+	// frameW and frameH are the caption and borders, measured once in build.
 	frameW, frameH int32
 
 	heads []string
@@ -549,19 +444,13 @@ type panel struct {
 	surf *surface
 	mask *surface
 
-	// ulwFlags is settled by show() and reused by every repaint, so a hover
-	// redraw cannot silently switch the window between opaque and blended.
-	ulwFlags uint32
-
 	// armed is set by the first real activation. Until then a WA_INACTIVE must
 	// be ignored: SetForegroundWindow can be refused, and an unarmed panel
 	// would then vanish before the user ever saw it.
 	armed bool
 	// closing collapses the several ways the panel can be dismissed into one
 	// WM_CLOSE, so a second trigger cannot destroy the window twice.
-	closing  bool
-	hover    bool
-	tracking bool
+	closing bool
 	// reported keeps OnMove to one call. The panel can be told to close twice -
 	// a focus loss and the tray's own WM_CLOSE arrive independently - and the
 	// caller writes a config file for each report it gets.
@@ -578,11 +467,10 @@ type panel struct {
 	origin    win.POINT
 	// exitedMove records that WM_EXITSIZEMOVE has arrived for a move loop that is
 	// still on the stack. run's message pump reads it to settle a loop THIS CODE
-	// DID NOT START, which only the system look can produce: its caption and its
-	// Alt+Space window menu both enter the system's move loop directly, so the
-	// SendMessage in WM_LBUTTONDOWN - the only settling point Modern needs - is
-	// never reached and moving would be stranded set for the rest of the panel's
-	// life, leaving it immune to focus loss and unable to act on a deferred close.
+	// DID NOT START: the caption and the Alt+Space window menu both enter the
+	// system's move loop directly, so the SendMessage in WM_LBUTTONDOWN is never
+	// reached and moving would be stranded set for the rest of the panel's life,
+	// leaving it immune to focus loss and unable to act on a deferred close.
 	exitedMove bool
 	// moving is true from WM_ENTERSIZEMOVE until settleDrag clears it, which is the
 	// whole life of the system's modal move loop plus the instant it takes
@@ -618,10 +506,6 @@ type panel struct {
 	byFocus bool
 	// moveRectFailed keeps the WM_MOVE diagnostic to one line per panel.
 	moveRectFailed bool
-	// raster is reused by every roundRect call this panel makes, because a fresh
-	// rasterizer per call costs 1.64 MB and about 5 ms of the repaint that runs
-	// inside the window procedure - see roundRect.
-	raster *vector.Rasterizer
 	// paintFailed does the same for the WM_PAINT diagnostic, and for a stronger
 	// reason: a window whose BeginPaint fails is asked to paint again immediately,
 	// so an ungated line there is not a log entry but a log flood.
@@ -629,43 +513,24 @@ type panel struct {
 }
 
 func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *panel {
-	// The one place the requested appearance is interpreted. A switch with a
-	// default arm, not a comparison against "modern": gui.Forecast.Appearance
-	// documents the empty string and anything unrecognised as modern, and a
-	// config file edited by hand is the case that has to land there.
-	sysLook := false
-	switch req.Appearance {
-	case "system":
-		sysLook = true
-	}
-
-	// In Modern the theme option chooses the palette, which is what resolveDark
-	// answers: an explicit "dark" or "light" overrides the desktop.
+	// The theme option deliberately does NOT choose this palette, and resolveDark
+	// is therefore not what answers here. The desktop paints this window's
+	// caption, so its client area has to agree with the desktop rather than with a
+	// preference: honouring icon_theme="light" would put a light table under a
+	// caption the DWM has drawn dark. The only question left is the one
+	// GetSysColor cannot answer - whether Windows is drawing applications dark -
+	// so that setting is read directly. The theme option still drives the tray
+	// icon; it simply has nothing to say about a window the desktop paints.
 	//
-	// In the system look it must NOT, because the desktop theme is now what paints
-	// the window. The only question left is the one GetSysColor cannot answer -
-	// whether Windows is drawing applications dark - so the preference is read
-	// directly. Honouring icon_theme="light" here would put the app's light
-	// palette in a window whose caption the DWM has drawn dark, which is the
-	// mismatch this look exists to remove. The option still drives the tray icon
-	// and still chooses the Modern palette; it simply has nothing to say about a
-	// window painted by the desktop.
-	dark := resolveDark(req.Theme)
-	if sysLook {
-		// High contrast wins over the dark-apps switch - see panelPaletteSystem for
-		// why the substitution that is right for dark mode is wrong here.
-		dark = systemDark() && !highContrastOn()
-	}
+	// High contrast wins over the dark-apps switch - see panelPaletteSystem for
+	// why the substitution that is right for dark mode is wrong there.
+	dark := systemDark() && !highContrastOn()
 
 	p := &panel{
-		title:   l.ForecastTitle(),
-		req:     req,
-		sysLook: sysLook,
-		dark:    dark,
-		// Provisional: show() replaces it once the display has been asked
-		// whether it will composite per-pixel alpha - a question the system look
-		// never asks, since it composites nothing.
-		pal:   panelPaletteFor(dark, true),
+		title: l.ForecastTitle(),
+		req:   req,
+		dark:  dark,
+		pal:   panelPaletteSystem(dark),
 		heads: l.ForecastHeaders(),
 	}
 	for _, d := range data {
@@ -683,8 +548,8 @@ func newPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) *pane
 	return p
 }
 
-// The owner of the system look's panel: one invisible, zero-sized window that is
-// never shown and never painted.
+// The panel's owner: one invisible, zero-sized window that is never shown and
+// never painted.
 //
 // It exists because of what dropping WS_EX_TOOLWINDOW cost. That flag was doing
 // two jobs at once - the thin palette caption, which was wrong and is gone, and
@@ -720,22 +585,8 @@ func ensurePanelOwner(inst win.HINSTANCE) win.HWND {
 	return panelOwner
 }
 
-// styles is the window's shape in this look. CreateWindowEx and frameOverhead
-// must both be fed from here, never from a literal, or the frame the layout pays
-// for stops being the frame the window has.
-func (p *panel) styles() (style, exStyle uint32) {
-	if p.sysLook {
-		return panelStyleSystem, panelExStyleSystem
-	}
-	return panelStyleModern, panelExStyleModern
-}
-
 // frame is how much larger the window is than the image it shows: the caption
 // and the borders.
-//
-// Zero in Modern, and stated as a branch rather than left to the syscall: a bare
-// WS_POPUP has no non-client pixels at all, AdjustWindowRectEx would answer 0,0
-// for it, and there is no reason to make a call to be told so.
 //
 // It is asked about the SAME styles CreateWindowEx was given, both of them, and
 // through the Ex form of the call. Passing anything else - or dropping the
@@ -749,11 +600,8 @@ func (p *panel) styles() (style, exStyle uint32) {
 // shows uninitialised memory, and a panel missing a hairline is easier to live
 // with than one with a garbage stripe across it.
 func (p *panel) frame() (w, h int32) {
-	if !p.sysLook {
-		return 0, 0
-	}
 	var rc win.RECT
-	if !adjustWindowRectEx(&rc, panelStyleSystem, false, panelExStyleSystem) {
+	if !adjustWindowRectEx(&rc, panelStyle, false, panelExStyle) {
 		log.Print("forecast: AdjustWindowRectEx failed; the panel will be sized without its frame")
 		return 0, 0
 	}
@@ -763,25 +611,19 @@ func (p *panel) frame() (w, h int32) {
 // windowSize is the size to give the WINDOW.
 //
 // p.w and p.h are always the CLIENT size: they size p.img and p.surf, and the
-// composed image is exactly what the client area shows. In Modern the window is
-// the client area, because a WS_POPUP with no border has no non-client pixels at
-// all, and the two numbers are the same. In the system look the caption and
-// borders have to be added on top - hand p.w/p.h straight to CreateWindowEx there
-// and the caption eats the top of the table, because the client area comes out
+// composed image is exactly what the client area shows. The caption and borders
+// have to be added on top - hand p.w/p.h straight to CreateWindowEx and the
+// caption eats the top of the table, because the client area then comes out
 // shorter than the image by exactly the caption's height.
 //
 // EVERY placement decision has to use this and not p.w/p.h: panelCorner and
 // clampToWork both reason about the window's edges against the work area, and
 // SetWindowPos is given a window rect. build's shrink-to-fit has to account for
 // it too - see build.
-// One consequence worth writing down, because it is invisible until a user
-// switches looks: everything this file remembers as "the position" is
-// GetWindowRect's, which is the FRAME in the system look and the window itself in
-// Modern. The two are the same value only when there is no frame, so a position
-// saved in one look and reused in the other is off by the caption height, once,
-// until the next drag. gtk.Window.Position carries the same caveat with measured
-// numbers; neither backend stores which look wrote a position, and a config field
-// for a one-time nudge of about thirty pixels is not worth it.
+//
+// Everything this file remembers as "the position" is the FRAME's top-left, which
+// is what GetWindowRect answers and therefore what reportMove hands back: saved
+// and restored the same way, so the panel reopens where it was left.
 func (p *panel) windowSize() (int32, int32) {
 	return p.w + p.frameW, p.h + p.frameH
 }
@@ -1033,14 +875,9 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 			HInstance:   p.inst,
 			HCursor:     win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
 			// No class background brush and no CS_HREDRAW/CS_VREDRAW: nothing
-			// about this window is painted by the class. Note also that
-			// WS_EX_LAYERED is incompatible with CS_OWNDC and CS_CLASSDC.
-			//
-			// One class serves both looks, because the difference between them is
-			// entirely in the per-window styles CreateWindowEx is given. The null
-			// brush is right for the system look too: its WM_PAINT BitBlt covers
-			// every pixel of the client area, so a class brush would only paint
-			// the same pixels twice and flicker while doing it.
+			// about this window is painted by the class. The WM_PAINT BitBlt
+			// covers every pixel of the client area, so a class brush would only
+			// paint the same pixels twice and flicker while doing it.
 			HbrBackground: 0,
 			LpszClassName: &cn[0],
 		}
@@ -1054,30 +891,23 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	// The owner comes first, and before pending is set below: it is created with
 	// this same class, so a WM_NCCREATE arriving while pending is non-nil would
 	// hand it the panel that is about to be built.
-	var owner win.HWND
-	if p.sysLook {
-		owner = ensurePanelOwner(p.inst)
-	}
+	owner := ensurePanelOwner(p.inst)
 
-	// Create INVISIBLE, at 1x1, in both looks. A layered window shows nothing
-	// until UpdateLayeredWindow has been called for it, so creating it with
-	// WS_VISIBLE only flashes an empty frame; the system look would flash
-	// something worse, a 1x1 title bar in the top-left corner of the screen,
-	// because its size and position are not known until build and show have run.
+	// Create INVISIBLE, at 1x1. Its size and position are not known until build
+	// and show have run, so WS_VISIBLE here would flash a 1x1 title bar in the
+	// top-left corner of the screen first.
 	panelMu.Lock()
 	pending = p
 	panelMu.Unlock()
 
-	// The title is only ever seen in the system look, where it is the caption's
-	// text. Modern has no caption to put it in, but it is passed there too: it is
-	// also what the window reports to anything that asks its name.
+	// The title is the caption's text, and also what the window reports to
+	// anything that asks its name.
 	title := utf16Of(p.title)
 	cn := utf16Of(panelClassName)
-	style, exStyle := p.styles()
 	p.hwnd = win.CreateWindowEx(
-		exStyle,
+		panelExStyle,
 		&cn[0], &title[0],
-		style,
+		panelStyle,
 		0, 0, 1, 1,
 		owner, 0, p.inst, nil,
 	)
@@ -1089,12 +919,12 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		return
 	}
 
-	if p.sysLook && p.dark {
+	if p.dark {
 		// The caption is the one part of this window the app does not paint, and
 		// DwmSetWindowAttribute is the only way to ask for a dark one. Without it
 		// the client area drawn from the dark palette sits under a white title bar,
 		// which is exactly the mismatch panelPaletteSystem's dark branch exists to
-		// avoid. Modern has no caption, so it has nothing to ask for.
+		// avoid.
 		setDarkTitleBar(p.hwnd, true)
 	}
 
@@ -1137,10 +967,8 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	}
 
 	// The WINDOW's size, not the image's: p.x and p.y are the window's top-left
-	// corner in both looks - it is what UpdateLayeredWindow is given as pptDst,
-	// what SetWindowPos is given, and what GetWindowRect answers - so the size
-	// weighed against the work area has to be the window's too. In Modern the two
-	// are identical and this changes nothing.
+	// corner - what SetWindowPos is given and what GetWindowRect answers - so the
+	// size weighed against the work area has to be the window's too.
 	winW, winH := p.windowSize()
 
 	p.x, p.y = 0, 0
@@ -1168,8 +996,8 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	if !forceForeground(p.hwnd) {
 		// Worth saying out loud: without the foreground the panel holds no
 		// keyboard focus, so Escape does nothing and it will never be told it
-		// lost focus either. The close button is then the only way out, which
-		// is precisely why the panel draws one.
+		// lost focus either. The caption's close button and the tray icon are
+		// then the only ways out.
 		log.Printf("forecast: could not take the foreground; Escape and click-away will not work")
 	}
 
@@ -1193,135 +1021,29 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 	}
 }
 
-// perPixelAlpha reports whether THIS display will honour the panel's per-pixel
-// alpha, asked of the system rather than assumed.
-//
-// The condition is documented on ULW_ALPHA itself: "If the display mode is 256
-// colors or less, the effect of this value is the same as the effect of
-// ULW_OPAQUE." That is the trap, because the call still SUCCEEDS - it simply
-// ignores the alpha channel - so failure is not detectable after the fact, and
-// the translucent palette would then be composited as though it were opaque: the
-// sheet's premultiplied 82% colour drawn flat, with the four rounded corners
-// showing whatever the zeroed pixels outside the sheet happen to be, which is
-// black. That is exactly the black-notch failure the GTK stylesheet keeps a
-// solid palette for.
-//
-// A colour depth of 256 or fewer means at most 8 bits per pixel, and the depth
-// is BITSPIXEL times PLANES: BITSPIXEL is "the number of adjacent color bits for
-// each pixel" and PLANES "the number of color planes", so a planar 4-plane
-// 1-bit device answers 1 and 4 and is correctly read as 4bpp. Zero bits means
-// the question could not be answered, and the answer that always displays
-// correctly is the opaque one.
-//
-// It must be a DC for the SCREEN. A memory DC reports the depth of the bitmap
-// currently selected into it, which for a freshly created one is the default 1x1
-// monochrome bitmap - 1bpp, and every desktop would fail the test.
-func perPixelAlpha(hwnd win.HWND) bool {
-	dc := win.GetDC(hwnd)
-	if dc == 0 {
+// show composes the panel and puts the window where it belongs. It is called
+// while the window is still hidden; run's ShowWindow is what reveals it.
+func (p *panel) show() bool {
+	p.paint()
+
+	// One call moves and resizes. It is given the WINDOW rect, and the window is
+	// sized so its CLIENT area is exactly the composed image - see windowSize.
+	//
+	// SWP_NOZORDER because WS_EX_TOPMOST already put the window at the top of the
+	// topmost band and this call has no business reordering it; SWP_NOACTIVATE
+	// because the window is still hidden and activation is forceForeground's job,
+	// after ShowWindow.
+	winW, winH := p.windowSize()
+	if !win.SetWindowPos(p.hwnd, 0, p.x, p.y, winW, winH,
+		win.SWP_NOZORDER|win.SWP_NOACTIVATE) {
+		// Silence here would leave a 1x1 window in the corner of the screen, which
+		// reads to the user as "the tray icon does nothing".
+		log.Print("forecast: SetWindowPos failed; the panel cannot be placed")
 		return false
 	}
-	defer win.ReleaseDC(hwnd, dc)
-
-	bits := win.GetDeviceCaps(dc, win.BITSPIXEL)
-	planes := win.GetDeviceCaps(dc, win.PLANES)
-	if planes < 1 {
-		// Every raster display reports exactly one plane, so a zero here is a
-		// driver that declined to answer rather than a plane-less device. Taking
-		// it literally would multiply a perfectly good 32bpp depth to nothing
-		// and make every desktop opaque.
-		planes = 1
-	}
-	return bits*planes > 8
-}
-
-// show paints the panel in the palette this display can actually show and gets
-// it onto the screen.
-//
-// The two palettes are the translucent and solid halves of the same design, and
-// which one is used is decided by perPixelAlpha, never assumed. The solid one
-// squares the sheet's corners and fills every pixel of the window opaquely, and
-// the flag becomes ULW_OPAQUE, the documented "draw an opaque layered window".
-func (p *panel) show() bool {
-	if p.sysLook {
-		// perPixelAlpha is not asked, because nothing here composites: the window
-		// is opaque and the display's colour depth cannot make it anything else.
-		// ulwFlags stays 0 for the same reason - it names a flag for a call this
-		// look never makes.
-		p.pal = panelPaletteSystem(p.dark)
-		p.paint()
-
-		// SetWindowPos does what UpdateLayeredWindow does for Modern: move and
-		// resize in one call. It is given the WINDOW rect, and the window is sized
-		// so its CLIENT area is exactly the composed image - see windowSize.
-		//
-		// SWP_NOZORDER because WS_EX_TOPMOST already put the window at the top of
-		// the topmost band and this call has no business reordering it;
-		// SWP_NOACTIVATE because the window is still hidden and activation is
-		// forceForeground's job, after ShowWindow.
-		winW, winH := p.windowSize()
-		if !win.SetWindowPos(p.hwnd, 0, p.x, p.y, winW, winH,
-			win.SWP_NOZORDER|win.SWP_NOACTIVATE) {
-			// Same reasoning as the layered failure below: silence here leaves a
-			// 1x1 window in the corner of the screen, which reads as "the tray icon
-			// does nothing".
-			log.Print("forecast: SetWindowPos failed; the panel cannot be placed")
-			return false
-		}
-		// No InvalidateRect: the window is not visible yet, and the ShowWindow in
-		// run generates the first WM_PAINT.
-		return true
-	}
-
-	translucent := perPixelAlpha(p.hwnd)
-	p.pal = panelPaletteFor(p.dark, translucent)
-	p.ulwFlags = ulwAlpha
-	if !translucent {
-		p.ulwFlags = ulwOpaque
-		log.Printf("forecast: the display cannot composite per-pixel alpha; drawing the panel opaque")
-	}
-
-	p.paint()
-	ok, errno := p.push()
-	if !ok {
-		// A silent failure here produces an invisible window, which reads to
-		// the user as "the menu item does nothing".
-		log.Printf("forecast: UpdateLayeredWindow failed: %v", errno)
-	}
-	return ok
-}
-
-// push hands the finished surface to the compositor. The one call moves,
-// resizes and repaints the window, which is why no SetWindowPos is needed.
-//
-// MODERN ONLY. UpdateLayeredWindow requires WS_EX_LAYERED and the system look
-// does not have it, so a call from there would fail with
-// ERROR_INVALID_PARAMETER and the panel would simply never appear. That is a
-// programming error rather than a runtime condition, which is why it is logged
-// as one instead of being quietly absorbed.
-func (p *panel) push() (bool, syscall.Errno) {
-	if p.sysLook {
-		log.Print("forecast: push called in the system look; UpdateLayeredWindow needs WS_EX_LAYERED")
-		return false, 0
-	}
-	if p.surf == nil {
-		return false, 0
-	}
-	ptDst := win.POINT{X: p.x, Y: p.y}
-	ptSrc := win.POINT{X: 0, Y: 0}
-	size := win.SIZE{CX: p.w, CY: p.h}
-	blend := win.BLENDFUNCTION{
-		BlendOp:    blendOpSrcOver,
-		BlendFlags: 0,
-		// 255 is mandatory, not merely sensible: "Set the SourceConstantAlpha
-		// value to 255 (opaque) when you only want to use per-pixel alpha
-		// values." Anything less multiplies the whole panel down again. It is
-		// read only under ULW_ALPHA; ULW_OPAQUE ignores pblend entirely.
-		SourceConstantAlpha: 255,
-		AlphaFormat:         win.AC_SRC_ALPHA,
-	}
-	return updateLayeredWindow(p.hwnd, 0, &ptDst, &size,
-		p.surf.dc, &ptSrc, 0, &blend, p.ulwFlags)
+	// No InvalidateRect: the window is not visible yet, and the ShowWindow in run
+	// generates the first WM_PAINT.
+	return true
 }
 
 // release frees every GDI object the panel owns.
@@ -1342,7 +1064,6 @@ func (p *panel) release() {
 	p.surf = nil
 	p.mask = nil
 	p.img = nil
-	p.raster = nil
 }
 
 // pinned reports the dismissal policy AT THIS MOMENT.
@@ -1499,17 +1220,17 @@ func (p *panel) settleDrag() {
 // settleForeignDrag settles a move loop that this code did not start, and is
 // called from run's message pump after every DispatchMessage.
 //
-// IT EXISTS BECAUSE OF THE SYSTEM LOOK'S CAPTION. In Modern the only way into the
-// system's move loop is the SendMessage in WM_LBUTTONDOWN, and settleDrag is
-// called on the line after it - that is the earliest point at which the loop is
-// provably off the stack, and it is enough. A captioned window has two more ways
-// in that never touch this window procedure's press handling at all: dragging the
-// title bar, which DefWindowProc turns into a move by itself, and the Alt+Space
-// window menu's Move command, which WS_SYSMENU brings with the close button.
-// Neither reaches the SendMessage, so neither would ever be settled: moving would
-// stay set for the rest of the panel's life, switching the focus-loss dismissal
-// off permanently and - far worse - stranding any deferred WM_CLOSE, which would
-// leave a panel that cannot be closed by the tray icon at all.
+// IT EXISTS BECAUSE OF THE CAPTION. A press on the body goes into the move loop
+// through the SendMessage in WM_LBUTTONDOWN, and settleDrag is called on the line
+// after it - the earliest point at which the loop is provably off the stack. A
+// captioned window has two more ways in that never touch this window procedure's
+// press handling at all: dragging the title bar, which DefWindowProc turns into a
+// move by itself, and the Alt+Space window menu's Move command, which WS_SYSMENU
+// brings with the close button. Neither reaches the SendMessage, so neither would
+// ever be settled: moving would stay set for the rest of the panel's life,
+// switching the focus-loss dismissal off permanently and - far worse - stranding
+// any deferred WM_CLOSE, which would leave a panel that cannot be closed by the
+// tray icon at all.
 //
 // Settling from WM_EXITSIZEMOVE instead is not an option, and the case for that
 // message says why: it is sent from INSIDE the loop, which can still pump
@@ -1522,8 +1243,8 @@ func (p *panel) settleDrag() {
 // AFTER a WM_EXITSIZEMOVE means precisely "a loop ran to completion and nobody
 // settled it".
 func (p *panel) settleForeignDrag() {
-	// No log line: in the system look this is what the ordinary end of a title-bar
-	// drag looks like, and a line per drag is noise, not diagnosis.
+	// No log line: this is what the ordinary end of a title-bar drag looks like,
+	// and a line per drag is noise, not diagnosis.
 	if !p.moving || !p.exitedMove {
 		return
 	}
@@ -1543,12 +1264,12 @@ func (p *panel) settleForeignDrag() {
 // window. Two corrections are enough for any real screen; the floor stops it
 // shrinking the text into illegibility.
 //
-// WHAT "FITS" MEANS DEPENDS ON THE LOOK. The loop measures the CONTENT - p.w and
-// p.h are the client area - but what has to fit the work area is the whole
-// window, so the system look's caption and borders are subtracted from the
-// available space before the comparison. Skip that and a panel sized to exactly
-// fill the work area has its caption pushed off the top of the screen, where the
-// close button and the title-bar drag both live.
+// WHAT "FITS" MEANS. The loop measures the CONTENT - p.w and p.h are the client
+// area - but what has to fit the work area is the whole window, so the caption
+// and borders are subtracted from the available space before the comparison.
+// Skip that and a panel sized to exactly fill the work area has its caption
+// pushed off the top of the screen, where the close button and the title-bar drag
+// both live.
 func (p *panel) build(work win.RECT, haveWork bool) bool {
 	dpi := dpiOf(p.hwnd)
 
@@ -1597,10 +1318,6 @@ func (p *panel) build(work win.RECT, haveWork bool) bool {
 	}
 
 	p.img = image.NewRGBA(image.Rect(0, 0, int(p.w), int(p.h)))
-	// One rasterizer for the panel's whole life. Reset sizes it per shape and grows
-	// its buffer if it ever has to, so allocating it at the sheet's size - the
-	// largest shape drawn - means the hover repaint allocates nothing at all.
-	p.raster = vector.NewRasterizer(int(p.w), int(p.h))
 	p.surf = newSurface(int(p.w), int(p.h))
 	p.mask = newSurface(int(p.w), int(p.h))
 	if p.surf == nil || p.mask == nil {
@@ -1620,9 +1337,8 @@ func (p *panel) makeFonts() bool {
 	p.fonts = panelFonts{
 		thead: panelFont(theadPt, win.FW_SEMIBOLD, p.dpi),
 		cell:  panelFont(cellPt, win.FW_NORMAL, p.dpi),
-		close: panelFont(closePt, win.FW_BOLD, p.dpi),
 	}
-	if p.fonts.thead == 0 || p.fonts.cell == 0 || p.fonts.close == 0 {
+	if p.fonts.thead == 0 || p.fonts.cell == 0 {
 		return false
 	}
 	if !p.haveSymbols {
@@ -1651,7 +1367,7 @@ func (p *panel) makeFonts() bool {
 }
 
 func (p *panel) freeFonts() {
-	for _, f := range []win.HFONT{p.fonts.thead, p.fonts.cell, p.fonts.close, p.fonts.symbol} {
+	for _, f := range []win.HFONT{p.fonts.thead, p.fonts.cell, p.fonts.symbol} {
 		if f != 0 {
 			win.DeleteObject(win.HGDIOBJ(f))
 		}
@@ -1673,8 +1389,6 @@ func (p *panel) measure() {
 	met := panelMetrics{
 		theadH: m.lineHeight(p.fonts.thead),
 		cellH:  m.lineHeight(p.fonts.cell),
-		closeH: m.lineHeight(p.fonts.close),
-		closeW: m.width(closeGlyph, p.fonts.close),
 	}
 	if p.fonts.symbol != 0 {
 		met.symbolPx = scaleDPI(symbolPt, p.dpi)
@@ -1702,9 +1416,7 @@ func (p *panel) measure() {
 		met.natural[i] = w
 	}
 
-	// The close row exists only in Modern: the system look's caption carries the
-	// close button, so there is no glyph to draw and no room to reserve for one.
-	p.geom, p.w, p.h = layoutTable(met, p.dpi, len(p.rows), !p.sysLook)
+	p.geom, p.w, p.h = layoutTable(met, p.dpi, len(p.rows))
 }
 
 // layoutTable computes every rectangle in the panel and the panel's own size.
@@ -1723,20 +1435,7 @@ func (p *panel) measure() {
 //
 // It is a pure function of its arguments on purpose: it is the one piece of this
 // file whose arithmetic can be checked away from Windows.
-//
-// closeRow is false in the system look, where the caption's own close button
-// replaces the panel's. It collapses the close box to the zero RECT and reclaims
-// the height it and its gap occupied, so the table starts at the top padding
-// instead of under an empty band - and, because rectContains never matches a zero
-// rectangle, it is also what turns off the three mouse hit tests without a second
-// flag reaching them. THE TABLE ITSELF IS UNTOUCHED by it: every column edge, row
-// height, gap and hairline below comes out identical in both looks, which is the
-// promise the two backends' shared metrics rest on.
-//
-// m.closeW and m.closeH are simply ignored when closeRow is false. They are still
-// measured, because makeFonts creates the close font either way: one unused HFONT
-// is cheaper than a second failure path through makeFonts.
-func layoutTable(m panelMetrics, dpi int32, n int, closeRow bool) (panelGeom, int32, int32) {
+func layoutTable(m panelMetrics, dpi int32, n int) (panelGeom, int32, int32) {
 	s := func(v int) int32 { return scaleDPI(v, dpi) }
 
 	pad := s(pagePad)
@@ -1744,16 +1443,6 @@ func layoutTable(m panelMetrics, dpi int32, n int, closeRow bool) (panelGeom, in
 	contentL := pad
 	contentR := w - pad
 	cw := contentR - contentL
-
-	closeBoxW := min(m.closeW+2*s(closePadX), cw)
-	closeBoxH := m.closeH + 2*s(closePadY)
-	// headOffset is what the close row costs the table: its own height plus the
-	// page VBox spacing under it. Zero when there is no close row, and then the
-	// close box is the zero RECT rather than a strip of nothing at the top.
-	headOffset := closeBoxH + s(pageGapY)
-	if !closeRow {
-		closeBoxW, closeBoxH, headOffset = 0, 0, 0
-	}
 
 	gap := s(rowGapY)
 	ruleTh := max(1, s(rulePt))
@@ -1765,20 +1454,16 @@ func layoutTable(m panelMetrics, dpi int32, n int, closeRow bool) (panelGeom, in
 		tableH += (rows - 1) * (2*gap + ruleTh)
 	}
 
-	h := s(pagePadTop) + pad + headOffset + tableH
+	h := s(pagePadTop) + pad + tableH
 
 	var g panelGeom
-	// The window IS the sheet: no inner card, and the padding is inside it. In the
-	// system look the sheet is what fills the CLIENT area, with the caption above
-	// it - see windowSize.
+	// The sheet is not a card inside the window: it fills the CLIENT area, with
+	// the caption above it and the padding inside it - see windowSize.
 	g.sheet = rectAt(0, 0, w, h)
-	if closeRow {
-		g.closeBox = rectAt(contentR-closeBoxW, pad, closeBoxW, closeBoxH)
-	}
 
 	colL, colR := tableColumns(m.natural, contentL, contentR, s(colGapX))
 
-	headY := pad + headOffset
+	headY := pad
 	for i := 0; i < numCols; i++ {
 		g.head[i] = win.RECT{Left: colL[i], Top: headY, Right: colR[i], Bottom: headY + m.theadH}
 	}
@@ -1846,10 +1531,6 @@ func rectAt(x, y, w, h int32) win.RECT {
 	return win.RECT{Left: x, Top: y, Right: x + w, Bottom: y + h}
 }
 
-func rectContains(rc win.RECT, x, y int32) bool {
-	return x >= rc.Left && x < rc.Right && y >= rc.Top && y < rc.Bottom
-}
-
 // ---------------------------------------------------------------------------
 // Painting
 // ---------------------------------------------------------------------------
@@ -1858,50 +1539,20 @@ func (p *panel) paint() {
 	if p.img == nil || p.surf == nil {
 		return
 	}
-	// Start fully transparent. In the translucent palette the only pixels the
-	// design never claims are the four rounded corners, and their alpha 0 is
-	// what lets a click there fall through to the desktop.
-	//
-	// WHAT THE ALPHA CHANNEL IS FOR, PER LOOK, because the difference is easy to
-	// get wrong. In Modern it is the window: UpdateLayeredWindow reads it, alpha 0
-	// is a pixel the window does not have, and GDI writing into this surface would
-	// zero it - that is the rule panelpaint_windows.go is built around. In the
-	// system look nothing reads it: the sheet is opaque so every pixel ends at
-	// alpha 255, and BitBlt out of a BI_RGB DIB copies only the B, G and R bytes.
-	// The composition is left byte for byte identical anyway - premul is the
-	// identity at alpha 255, so premultiplied and plain are the same values - and
-	// the "GDI never touches the panel surface" rule still holds there, now as
-	// tidiness rather than as a load-bearing invariant. Do not weaken it on that
-	// account: it is one pipeline serving both looks and both backends, and the
-	// moment a DrawText lands on this surface it is Modern that breaks.
+	// Start from zeroes. The sheet below covers every pixel of the image, so this
+	// is belt and braces rather than a step the design needs: nothing reads the
+	// alpha channel any more, the sheet being opaque and BitBlt out of a BI_RGB
+	// DIB copying only the B, G and R bytes. The rule that GDI never draws into
+	// this surface survives on the same terms - as the shape of the pipeline
+	// rather than as a load-bearing invariant. See panelpaint_windows.go.
 	for i := range p.img.Pix {
 		p.img.Pix[i] = 0
 	}
 
 	g := &p.geom
-	s := func(v int) int32 { return scaleDPI(v, p.dpi) }
 
-	if r := s(p.pal.radiusPt); r > 0 {
-		roundRect(p.raster, p.img, g.sheet.Left, g.sheet.Top,
-			g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top,
-			float32(r), p.pal.sheet)
-	} else {
-		// Square corners: no rasteriser, and therefore no degenerate Bezier at
-		// each corner to reason about.
-		paintRect(p.img, g.sheet.Left, g.sheet.Top,
-			g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top, p.pal.sheet)
-	}
-
-	// The hover pill, and the × further down, are Modern's alone: the system look's
-	// close button is in the caption, so there is no target to highlight and no
-	// glyph to draw. Both are guarded explicitly rather than left to fall out of a
-	// zero closeBox - the pill would, but drawTextGroup would still clear the mask,
-	// flush GDI and composite a blank full-surface pass for a run it then skips.
-	if p.hover && !p.sysLook {
-		roundRect(p.raster, p.img, g.closeBox.Left, g.closeBox.Top,
-			g.closeBox.Right-g.closeBox.Left, g.closeBox.Bottom-g.closeBox.Top,
-			float32(s(closeRadiusPt)), p.pal.hoverFill)
-	}
+	paintRect(p.img, g.sheet.Left, g.sheet.Top,
+		g.sheet.Right-g.sheet.Left, g.sheet.Bottom-g.sheet.Top, p.pal.sheet)
 
 	paintRect(p.img, g.rule.Left, g.rule.Top,
 		g.rule.Right-g.rule.Left, g.rule.Bottom-g.rule.Top, p.pal.rule)
@@ -1964,51 +1615,14 @@ func (p *panel) paint() {
 	}
 
 	// The symbols share the cells' group because they share its colour: the
-	// palette's foreground, which is the same value forecast_linux.go tints its
-	// rasterised glyphs with. One group is one full-surface composite pass, so
-	// folding them in is free. In the system look that foreground is the theme's
-	// own ink - COLOR_WINDOWTEXT - for the same reason: the symbols are text.
+	// palette's foreground, which is the theme's own ink - COLOR_WINDOWTEXT - for
+	// the plainest of reasons, that the symbols are text, and the same value
+	// forecast_linux.go tints its rasterised glyphs with. One group is one
+	// full-surface composite pass, so folding them in is free.
 	drawTextGroup(p.img, p.mask, caps, p.pal.thead[0], p.pal.thead[1], p.pal.thead[2])
 	drawTextGroup(p.img, p.mask, cells, p.pal.text[0], p.pal.text[1], p.pal.text[2])
 
-	if !p.sysLook {
-		closeColour := p.pal.thead
-		if p.hover {
-			closeColour = p.pal.text
-		}
-		drawTextGroup(p.img, p.mask, []textRun{{
-			text:  closeGlyph,
-			rect:  g.closeBox,
-			flags: win.DT_CENTER | cellFlags,
-			font:  p.fonts.close,
-		}}, closeColour[0], closeColour[1], closeColour[2])
-	}
-
 	p.surf.blitFrom(p.img)
-}
-
-// repaint redraws the surface and gets it back onto the screen.
-//
-// In Modern that is another UpdateLayeredWindow, which always updates the entire
-// window, so there is no partial-invalidate path. In the system look it is an
-// InvalidateRect and the WM_PAINT that follows, which is the only way to reach a
-// window that is not layered.
-//
-// It is reachable only from the hover paths today, and those are Modern's alone,
-// so the system look's half of this is insurance rather than a live path. It is
-// here because the alternative - a repaint that silently did nothing, or worse
-// called push - is the kind of thing the next hover-like feature would trip over.
-func (p *panel) repaint() {
-	p.paint()
-	if p.sysLook {
-		if !win.InvalidateRect(p.hwnd, nil, false) {
-			log.Print("forecast: InvalidateRect failed on repaint; the panel may show stale content")
-		}
-		return
-	}
-	if ok, errno := p.push(); !ok {
-		log.Printf("forecast: UpdateLayeredWindow failed on repaint: %v", errno)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2031,10 +1645,9 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case win.WM_KEYDOWN:
 		// A top-level window with no child controls holds the focus itself, so
-		// VK_ESCAPE arrives here directly - true of the WS_POPUP in Modern and of
-		// the captioned window in the system look alike, since neither has a child
-		// to hand the focus to. IsDialogMessage is deliberately absent from the
-		// message loop: there are no controls to navigate and it would swallow keys.
+		// VK_ESCAPE arrives here directly - there is nothing to hand the focus to.
+		// IsDialogMessage is deliberately absent from the message loop: there are
+		// no controls to navigate and it would swallow keys.
 		if wParam == win.VK_ESCAPE {
 			// A pinned panel swallows Escape rather than passing it on: there is
 			// nothing else in this window that wants the key, and the point of
@@ -2094,85 +1707,37 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		// window still looks perfect.
 		return win.DefWindowProc(hwnd, msg, wParam, lParam)
 
-	case win.WM_MOUSEMOVE:
-		if p.sysLook {
-			// Nothing to track. The close button is in the caption, so there is no
-			// in-window target whose hover state could change, and asking for
-			// TME_LEAVE would buy a WM_MOUSELEAVE that nothing acts on. This is the
-			// "no hover tracking for a button that is not there" half of the look.
-			return 0
-		}
-		x, y := clientPoint(lParam)
-		if !p.tracking {
-			// Without a leave notification the close button stays highlighted
-			// after the pointer exits through a transparent corner, where no
-			// further WM_MOUSEMOVE is ever delivered.
-			tme := win.TRACKMOUSEEVENT{
-				CbSize:    uint32(unsafe.Sizeof(win.TRACKMOUSEEVENT{})),
-				DwFlags:   win.TME_LEAVE,
-				HwndTrack: hwnd,
-			}
-			p.tracking = win.TrackMouseEvent(&tme)
-		}
-		if over := rectContains(p.geom.closeBox, x, y); over != p.hover {
-			p.hover = over
-			p.repaint()
-		}
-		return 0
-
-	case win.WM_MOUSELEAVE:
-		p.tracking = false
-		if p.hover {
-			p.hover = false
-			p.repaint()
-		}
-		return 0
-
 	case win.WM_LBUTTONDOWN:
-		// Dragging. A press anywhere on the body except the close button is
-		// handed to the system's own modal move loop, which is what a title bar
-		// does with a press on itself: ReleaseCapture to give up the implicit
-		// capture this very message granted - the loop cannot start while
-		// another window holds the mouse - and then WM_NCLBUTTONDOWN with
-		// HTCAPTION, which is precisely the message DefWindowProc turns into a
-		// move. What the user expects of a drag comes free that way: the Escape
-		// that cancels it and puts the window back where it started, the Alt-Tab
-		// that interrupts it. Reimplementing it with SetCapture and WM_MOUSEMOVE
-		// gives up both and gains nothing, because the window's position is
-		// re-read from GetWindowRect on WM_MOVE either way.
+		// Dragging. A press anywhere on the body is handed to the system's own
+		// modal move loop, which is what a title bar does with a press on itself:
+		// ReleaseCapture to give up the implicit capture this very message granted
+		// - the loop cannot start while another window holds the mouse - and then
+		// WM_NCLBUTTONDOWN with HTCAPTION, which is precisely the message
+		// DefWindowProc turns into a move. What the user expects of a drag comes
+		// free that way: the Escape that cancels it and puts the window back where
+		// it started, the Alt-Tab that interrupts it. Reimplementing it with
+		// SetCapture and WM_MOUSEMOVE gives up both and gains nothing, because the
+		// window's position is re-read from GetWindowRect on WM_MOVE either way.
 		//
 		// What does NOT come free, and was claimed here in error: Aero Snap.
 		// Windows offers edge snapping only for windows it considers resizable,
-		// and neither look carries WS_THICKFRAME or WS_MAXIMIZEBOX - Modern is a
-		// bare WS_POPUP, the system look a WS_CAPTION|WS_SYSMENU window with no
-		// size box - so dragging either against an edge snaps to nothing.
+		// and this one carries neither WS_THICKFRAME nor WS_MAXIMIZEBOX, so
+		// dragging it against an edge snaps to nothing.
 		//
 		// NOT a WM_NCHITTEST that answers HTCAPTION for the whole client area,
-		// which is the shortcut every Win32 sample reaches for. It declares the
-		// entire window a caption, and a caption does not deliver WM_LBUTTONUP,
-		// WM_MOUSEMOVE or WM_MOUSELEAVE to the client area at all: the close
-		// button stops closing and its hover highlight stops appearing, and both
-		// failures look like a painting bug rather than a hit-testing one.
+		// which is the shortcut every Win32 sample reaches for. That declares the
+		// table itself non-client: no mouse message is delivered to it ever again,
+		// so anything the panel might later want there - a hit test, a hover, a
+		// click target - is dead before it is written, and a right-click on the
+		// forecast opens the window menu.
 		//
 		// SendMessage, not PostMessage: the move loop must run inside this
 		// message's own handling, while the button is still physically down.
 		//
-		// The close button is excluded HERE, at press time, rather than tidied up
-		// afterwards, because the move loop consumes the matching WM_LBUTTONUP -
-		// the button release is what ends the loop, and it is never delivered to
-		// this window procedure. A drag started on the × would therefore swallow
-		// the click that was meant to close the panel, and no amount of
-		// bookkeeping in WM_LBUTTONUP can recover an event that never arrives.
+		// The caption is draggable as well, by DefWindowProc, which starts the very
+		// same loop without this handler ever seeing the press. settleForeignDrag
+		// is what copes with that.
 		//
-		// In the system look there is no close box and geom.closeBox is the zero
-		// RECT, which rectContains never matches, so the whole client area is
-		// draggable - and the caption is draggable too, by DefWindowProc, which
-		// starts the very same loop without this handler ever seeing the press.
-		// settleForeignDrag is what copes with that.
-		x, y := clientPoint(lParam)
-		if rectContains(p.geom.closeBox, x, y) {
-			return 0
-		}
 		// The first handoff of this showing records where the window is right now,
 		// through GetWindowRect - the same call reportMove compares against once the
 		// panel closes. The handoff on its own says nothing about whether the user
@@ -2216,8 +1781,8 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		// the tray while the mouse still holds the drag.
 		//
 		// Escape needs nothing: it goes to the loop itself and cancels the move
-		// rather than reaching this window procedure. Neither does the close button,
-		// which cannot be clicked while the button is already down.
+		// rather than reaching this window procedure. Neither does the caption's
+		// close button, which cannot be clicked while the mouse is already down.
 		p.moving = true
 		// Any deferral still pending belongs to an earlier loop that was never
 		// settled, and this loop's settleDrag would otherwise act on it - closing
@@ -2226,23 +1791,19 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		// never be corrected by a later message either; discarding it here is the
 		// only cheap correction available.
 		//
-		// NO LONGER LATENT, and that is what settleForeignDrag is for. Modern is
-		// still the case this comment described: settleDrag runs after every loop
-		// THIS code starts, immediately after the SendMessage in WM_LBUTTONDOWN,
-		// and a bare WS_POPUP has no other way in - no caption to drag, and no
-		// Alt+Space window menu without WS_SYSMENU. The system look has both, so a
-		// loop can now end without WM_LBUTTONDOWN ever having been involved, and
-		// run's pump settles those. Discarding a stale deferral here is unchanged
-		// either way, and matters more now that more loops exist to strand one.
+		// It is not a theoretical worry: the caption and the Alt+Space window menu
+		// both start a loop that WM_LBUTTONDOWN never sees, so a loop can end with
+		// nobody having settled it, and only run's pump - see settleForeignDrag -
+		// catches those.
 		p.deferredInactive = false
 		p.exitedMove = false
 
 		// The origin for the position report, when the loop was not started by
-		// WM_LBUTTONDOWN. That handler records it before its SendMessage, so in
-		// Modern this is always a no-op; in the system look a title-bar drag arrives
-		// here having recorded nothing, and without this the panel would be moved by
-		// the one gesture a captioned window makes most obvious and then forget
-		// where it was put, because reportMove refuses to report without a handoff.
+		// WM_LBUTTONDOWN. That handler records it before its SendMessage, so a body
+		// drag reaches this as a no-op; a title-bar drag arrives here having
+		// recorded nothing, and without this the panel would be moved by the one
+		// gesture a captioned window makes most obvious and then forget where it
+		// was put, because reportMove refuses to report without a handoff.
 		//
 		// Reading it here is as good as reading it there: WM_ENTERSIZEMOVE is sent
 		// as the loop STARTS, before the window has moved a pixel.
@@ -2276,106 +1837,74 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 
 	case win.WM_MOVE:
-		// The move loop repositions the window behind this code's back, and
-		// p.x/p.y are what push() hands UpdateLayeredWindow as the DESTINATION of
-		// every repaint. Left stale, the next hover redraw would teleport the
-		// panel back to where it opened. Reading the window rect rather than
-		// unpacking lParam keeps this independent of the client-origin equality
-		// that only holds because the window has no frame - and the system look is
-		// exactly the case where it does not hold: lParam carries the CLIENT
-		// origin, which under a caption sits below and inside the window's own
-		// top-left, so unpacking it would drift the panel up and left by the frame
-		// on every move. p.x/p.y are the WINDOW's position in both looks.
+		// The move loop repositions the window behind this code's back, so p.x/p.y
+		// - the WINDOW's top-left, which is where show() placed it - are refreshed
+		// here rather than left describing where the panel opened.
+		//
+		// Reading the window rect rather than unpacking lParam: lParam carries the
+		// CLIENT origin, which under a caption sits below and inside the window's
+		// own top-left, so unpacking it would drift the recorded position up and
+		// left by the frame on every move.
 		var rc win.RECT
 		if win.GetWindowRect(hwnd, &rc) {
 			p.x, p.y = rc.Left, rc.Top
 		} else if !p.moveRectFailed {
-			// Two visible failures from one swallowed error, which is why this is
-			// the one GetWindowRect in this file that must not fail quietly: the
-			// next hover repaint pushes the stale destination and drags the panel
-			// back to where it opened, and since that is also the recorded origin,
-			// the drag then reports nothing when the panel closes.
-			//
 			// Once per panel, not once per message: WM_MOVE arrives dozens of times
 			// a second while the window is being dragged, and whatever makes this
-			// call fail will make all of them fail.
+			// call fail will make all of them fail. It is worth one line even so:
+			// reportMove reads the position through the same call, so a
+			// GetWindowRect that has started failing is about to lose the drag the
+			// user just made.
 			p.moveRectFailed = true
-			log.Print("forecast: GetWindowRect failed on WM_MOVE; the panel may snap back on the next repaint")
-		}
-		return 0
-
-	case win.WM_LBUTTONUP:
-		// Hit testing on a layered window follows the alpha channel: in Modern the
-		// four rounded corners, where the alpha is zero, let a click through to
-		// whatever is underneath, which deactivates this window and closes it
-		// through WM_ACTIVATE above. Everywhere else lands here, and only the
-		// close button does anything with it.
-		//
-		// The system look is an ordinary opaque rectangle: nothing falls through,
-		// and geom.closeBox is the zero RECT, so this arrives and does nothing.
-		// Clicks on the caption never reach it at all - they are non-client and go
-		// to DefWindowProc, which is how its close button works.
-		x, y := clientPoint(lParam)
-		if rectContains(p.geom.closeBox, x, y) {
-			p.requestClose()
+			log.Print("forecast: GetWindowRect failed on WM_MOVE; the panel's recorded position is stale")
 		}
 		return 0
 
 	case win.WM_PAINT:
-		// MODERN FALLS THROUGH. Its surface belongs to the compositor, which
-		// repaints it without asking; the message is left to DefWindowProc exactly
-		// as it was before this case existed. Something must answer it either way -
-		// a WM_PAINT that does not validate the update region is sent again
-		// immediately, forever.
-		if p.sysLook {
-			var ps win.PAINTSTRUCT
-			dc := win.BeginPaint(hwnd, &ps)
-			if dc != 0 {
-				// The whole client area in one BitBlt, not ps.RcPaint: the client
-				// area IS the composed image, pixel for pixel - windowSize added
-				// the frame on the outside - so there is nothing to be gained by
-				// clipping to the damaged part of an image that is already in
-				// memory, and a partial blit is one more thing to get wrong.
-				//
-				// A failure needs no branch. blitTo answers false only for a
-				// disposed surface or a null DC, and either way the client area
-				// keeps whatever the system last showed rather than becoming
-				// garbage: WM_ERASEBKGND painted nothing over it.
-				p.surf.blitTo(dc)
-				win.EndPaint(hwnd, &ps)
-				return 0
-			}
-			if !p.paintFailed {
-				p.paintFailed = true
-				log.Print("forecast: BeginPaint failed; leaving the repaint to DefWindowProc")
-			}
-			// No EndPaint: there is no PAINTSTRUCT to pass it. Falling through to
-			// DefWindowProc is what keeps this from spinning the thread at 100% -
-			// it does its own BeginPaint/EndPaint pair and validates the region.
+		var ps win.PAINTSTRUCT
+		dc := win.BeginPaint(hwnd, &ps)
+		if dc != 0 {
+			// The whole client area in one BitBlt, not ps.RcPaint: the client area
+			// IS the composed image, pixel for pixel - windowSize added the frame
+			// on the outside - so there is nothing to be gained by clipping to the
+			// damaged part of an image that is already in memory, and a partial
+			// blit is one more thing to get wrong.
+			//
+			// A failure needs no branch. blitTo answers false only for a disposed
+			// surface or a null DC, and either way the client area keeps whatever
+			// the system last showed rather than becoming garbage: WM_ERASEBKGND
+			// painted nothing over it.
+			p.surf.blitTo(dc)
+			win.EndPaint(hwnd, &ps)
+			return 0
 		}
+		if !p.paintFailed {
+			p.paintFailed = true
+			log.Print("forecast: BeginPaint failed; leaving the repaint to DefWindowProc")
+		}
+		// No EndPaint: there is no PAINTSTRUCT to pass it. Falling through to
+		// DefWindowProc is what keeps this from spinning the thread at 100% - it
+		// does its own BeginPaint/EndPaint pair and validates the region.
 
 	case win.WM_ERASEBKGND:
-		// "I erased it", in both looks and for two different reasons. In Modern
-		// nothing may draw on the surface at all - UpdateLayeredWindow owns it. In
-		// the system look the WM_PAINT above covers every pixel of the client area
-		// from the DIB, so erasing first would only paint those pixels twice and
-		// flicker while doing it. The client area cannot be larger than the image
-		// either: it is set from windowSize, and the panel is far wider than the
-		// SM_CXMIN a captioned window's minimum tracking size could clamp it to -
-		// 620 layout units is 465 pixels even at the minLayoutDPI floor.
+		// "I erased it", because the WM_PAINT above covers every pixel of the
+		// client area from the DIB and erasing first would only paint those pixels
+		// twice and flicker while doing it. The client area cannot be larger than
+		// the image either: it is set from windowSize, and the panel is far wider
+		// than the SM_CXMIN a captioned window's minimum tracking size could clamp
+		// it to - 620 layout units is 465 pixels even at the minLayoutDPI floor.
 		return 1
 
 	case win.WM_CLOSE:
-		// Every dismissal funnels through here - Escape, focus loss, the close
-		// button, and the tray's own PostMessage in closeOpenPanel - which makes
-		// it the one place the final position can be read while the window still
-		// exists. WM_DESTROY would be too late for GetWindowRect to mean
+		// Every dismissal funnels through here - Escape, focus loss, the caption's
+		// close button, and the tray's own PostMessage in closeOpenPanel - which
+		// makes it the one place the final position can be read while the window
+		// still exists. WM_DESTROY would be too late for GetWindowRect to mean
 		// anything.
 		//
-		// THE SYSTEM LOOK'S CAPTION CLOSE BUTTON LANDS HERE TOO, and that is the
-		// whole reason the position survives in that look: there is no in-window ×
-		// to route through requestClose, so this is the main way out. The chain is
-		// all DefWindowProc's, and this file breaks no link in it - a click on the
+		// THE CAPTION'S CLOSE BUTTON LANDS HERE TOO, which is the whole reason the
+		// position survives the commonest way out of all. The chain is all
+		// DefWindowProc's and this file breaks no link in it: a click on the
 		// caption's close box hit-tests as HTCLOSE, DefWindowProc turns the release
 		// into WM_SYSCOMMAND with SC_CLOSE, and DefWindowProc's SC_CLOSE handling
 		// sends WM_CLOSE. Neither WM_NCLBUTTONUP nor WM_SYSCOMMAND is intercepted
@@ -2406,13 +1935,6 @@ func panelWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return win.DefWindowProc(hwnd, msg, wParam, lParam)
 	}
 	return win.DefWindowProc(hwnd, msg, wParam, lParam)
-}
-
-// clientPoint unpacks the mouse coordinates from lParam. They are signed 16-bit
-// and can be negative on a multi-monitor desktop, so the cast through int16
-// matters.
-func clientPoint(lParam uintptr) (int32, int32) {
-	return int32(int16(win.LOWORD(uint32(lParam)))), int32(int16(win.HIWORD(uint32(lParam))))
 }
 
 // ---------------------------------------------------------------------------

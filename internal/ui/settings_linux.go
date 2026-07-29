@@ -133,27 +133,9 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 
 	scale := sliderFrame(page, l, cfg.FontScale, onFontScale)
 
-	// Directly above the pin checkbox: both settings are about the forecast panel
-	// and nothing else, so they belong next to each other. Modern is first because
-	// it is what index falls back to, which is what an unrecognised value in the
-	// file must show.
-	//
-	// A row with a plain caption, NOT a titled frame like every other group in this
-	// window, and the reason is arithmetic rather than taste. This window is
-	// gtk.NewWindow(..., resizable=false) around an unscrolled page, so its natural
-	// height IS its height and nothing can shrink it. Measured on a 1366x768 screen:
-	// 723 client pixels under BlackMATE before this option existed, already past a
-	// 720 work area, and a frame for these two words took it to 785 - the whole
-	// button row below the bottom edge of the screen, with no way left to reach
-	// Save. A frame costs its border and its title on top of the row it holds; a
-	// caption in the row costs the row. The pin checkbox below is frameless for the
-	// same reason and says so.
-	appearance := radioRow(page, l.AppearanceGroup(), []string{l.LookModern(), l.LookSystem()},
-		config.Index(cfg.Appearance, "modern", "system"))
-
-	// Straight into the page, with no frame around it either. A titled border
-	// holding a single checkbox is chrome for nothing, and the checkbox's own label
-	// is its title.
+	// Straight into the page, with no frame around it. A titled border holding a
+	// single checkbox is chrome for nothing, and the checkbox's own label is its
+	// title.
 	pin := gtk.NewCheck(l.PinForecast(), cfg.ForecastPinned)
 	gtk.PackStart(page, uintptr(pin), false, false, 0)
 
@@ -171,14 +153,6 @@ func buildSettings(cfg *config.Config, onFontScale func(int), result chan<- *con
 		nc.IconTheme = config.Pick(theme.Active(), "auto", "dark", "light")
 		nc.Language = config.Pick(lang.Active(), "en", "uk")
 		nc.FontScale = scale.Value()
-		// Only when the buttons were actually built. Active answers -1 for a group
-		// with no members, and pick turns any out-of-range index into the first
-		// option - so a group that could not be created would write "modern" over a
-		// user who had chosen the system look and was never shown either button.
-		// nc carries the stored value forward instead.
-		if i := appearance.Active(); i >= 0 {
-			nc.Appearance = config.Pick(i, "modern", "system")
-		}
 		// Only when the box was actually built. A Check that could not be
 		// created reads as unticked, and writing that would turn off an option
 		// the user was never shown; nc carries the stored value forward instead.
@@ -309,20 +283,6 @@ func settingsMaxPageH() int {
 		return 0
 	}
 	return h
-}
-
-// radioRow is radioFrame without the frame: a caption and the buttons on one
-// line. It exists because this window has no vertical room for another titled
-// group - see the comment at its call site, which has the measurements.
-func radioRow(page uintptr, caption string, labels []string, active int) gtk.RadioGroup {
-	group := gtk.NewRadioGroup(labels, active)
-	row := gtk.NewHBox(12)
-	gtk.PackStart(row, gtk.NewText(caption+":"), false, false, 0)
-	for _, b := range group {
-		gtk.PackStart(row, b, false, false, 0)
-	}
-	gtk.PackStart(page, row, false, false, 0)
-	return group
 }
 
 // sliderFrame is the tray font size, which previews live: dragging regenerates

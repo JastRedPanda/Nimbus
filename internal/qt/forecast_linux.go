@@ -16,8 +16,8 @@ import (
 //
 // What is in THIS file is the part that is the same on every backend: fetch off
 // the loop, format the columns, decide whether the click was an opening one or a
-// closing one, and remember where the panel was left. The window itself - both
-// looks, the drag, the dismissal policy, the placement - is in qtshim/shim.cpp,
+// closing one, and remember where the panel was left. The window itself - the
+// table, the drag, the dismissal policy, the placement - is in qtshim/shim.cpp,
 // because that is the half that has to be written in C++.
 //
 // The division is not arbitrary. Everything that could be decided in Go IS
@@ -144,16 +144,7 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 		},
 	})
 
-	// Tested for "system" with everything else falling through to Modern, never by
-	// comparing against "modern": the value arrives from a configuration file the
-	// user can edit by hand, and both an unrecognised string and the empty string a
-	// caller that predates the option sends have to mean the look that existed
-	// before the option did.
-	system := int32(0)
-	if req.Appearance == "system" {
-		system = 1
-	}
-	qtPanelBegin(l.ForecastTitle(), system, darkFor(req.Theme))
+	qtPanelBegin(l.ForecastTitle())
 
 	for i, caption := range l.ForecastHeaders() {
 		if i >= len(colAlign) {
@@ -178,18 +169,4 @@ func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 	}
 	qtPanelShow(id, have, x, y, pinnedTramp, eventTramp)
 	panelUp = true
-}
-
-// darkFor turns the theme setting into what the shim expects: 1 dark, 0 light,
-// -1 decide from the desktop theme. The last one is answered on the C++ side,
-// where the palette is - the same question the GTK panel answers by reading the
-// theme's own ink.
-func darkFor(theme string) int32 {
-	switch theme {
-	case "dark":
-		return 1
-	case "light":
-		return 0
-	}
-	return -1
 }

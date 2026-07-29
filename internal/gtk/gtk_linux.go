@@ -127,7 +127,6 @@ var (
 	widgetName     func(uintptr, string)
 	boxHomogeneous func(uintptr, int32)
 
-	windowDecorated func(uintptr, int32)
 	windowSkipTask  func(uintptr, int32)
 	windowSkipPager func(uintptr, int32)
 	windowKeepAbove func(uintptr, int32)
@@ -135,11 +134,7 @@ var (
 	windowMove      func(uintptr, int32, int32)
 	windowGetSize   func(uintptr, *int32, *int32)
 	widgetShow      func(uintptr)
-	widgetSetVisual func(uintptr, uintptr)
 	buttonNew       func(string) uintptr
-
-	screenComposited func(uintptr) int32
-	screenRGBAVisual func(uintptr) uintptr
 
 	displayDefault  func() uintptr
 	displaySeat     func(uintptr) uintptr
@@ -307,7 +302,6 @@ func load() {
 	purego.RegisterLibFunc(&widgetVexpand, gtk, "gtk_widget_set_vexpand")
 	purego.RegisterLibFunc(&styleContext, gtk, "gtk_widget_get_style_context")
 	purego.RegisterLibFunc(&styleGetColor, gtk, "gtk_style_context_get_color")
-	purego.RegisterLibFunc(&windowDecorated, gtk, "gtk_window_set_decorated")
 	purego.RegisterLibFunc(&windowSkipTask, gtk, "gtk_window_set_skip_taskbar_hint")
 	purego.RegisterLibFunc(&windowSkipPager, gtk, "gtk_window_set_skip_pager_hint")
 	purego.RegisterLibFunc(&windowKeepAbove, gtk, "gtk_window_set_keep_above")
@@ -315,14 +309,11 @@ func load() {
 	purego.RegisterLibFunc(&windowMove, gtk, "gtk_window_move")
 	purego.RegisterLibFunc(&windowGetSize, gtk, "gtk_window_get_size")
 	purego.RegisterLibFunc(&widgetShow, gtk, "gtk_widget_show")
-	purego.RegisterLibFunc(&widgetSetVisual, gtk, "gtk_widget_set_visual")
 	purego.RegisterLibFunc(&buttonNew, gtk, "gtk_button_new_with_label")
 
 	// All of these are GDK, but dlsym walks GTK's dependency chain, so the
 	// libgtk-3 handle resolves them - the same reason gdk_screen_get_default
 	// already works without a second dlopen.
-	purego.RegisterLibFunc(&screenComposited, gtk, "gdk_screen_is_composited")
-	purego.RegisterLibFunc(&screenRGBAVisual, gtk, "gdk_screen_get_rgba_visual")
 	purego.RegisterLibFunc(&displayDefault, gtk, "gdk_display_get_default")
 	purego.RegisterLibFunc(&displaySeat, gtk, "gdk_display_get_default_seat")
 	purego.RegisterLibFunc(&seatPointer, gtk, "gdk_seat_get_pointer")
@@ -1132,22 +1123,27 @@ func ConnectEvent(obj uintptr, signal string, fn func(event uintptr) bool) {
 	signalConnect(obj, signal, eventTrampoline, id, 0, 0)
 }
 
-// newPanelWindow creates the toplevel that both looks of the forecast panel are
-// built on, which is everything about it except whether the window manager frames
-// it. NewPanel turns the frame off; NewFramedPanel leaves it on.
+// NewFramedPanel creates the toplevel the forecast panel is built on: an
+// always-on-top window that stays out of the taskbar and the pager and follows
+// the user across workspaces - a tray popup rather than a document window - with
+// the window manager's frame left on, so it carries a title bar, a border and the
+// manager's own close button.
 //
-// The hints live here rather than in each constructor because not one of them
-// depends on the decorations: in either look this is a tray popup, so it stays
-// above other windows (an explicit request of its own, not a side effect of being
-// undecorated), keeps its button out of the taskbar and the pager, and sticks to
-// every workspace so it follows the user. Copying the list into a second
-// constructor is how the two end up a hint apart after the next change to either.
+// The frame is the DEFAULT rather than something asked for: GTK decorates a
+// toplevel unless told otherwise, which is the same default NewWindow relies on
+// for the settings and About windows. None of the hints below is a consequence of
+// being framed or unframed - a framed panel is still a tray popup, so it still
+// belongs above other windows (an explicit request of its own), out of the
+// taskbar and the pager, and stuck across workspaces.
 //
 // Every call below is a property set on a window that is not realised yet, so GTK
-// stores the value and applies it when the GdkWindow is created. The order they
-// are made in therefore carries no meaning, which is what lets the one call that
-// differs be left to the caller.
-func newPanelWindow(title string, w, h int) uintptr {
+// stores the value and applies it when the GdkWindow is created; the order
+// therefore carries no meaning.
+//
+// The caller owns dismissal, and with a frame that means OnDeleteEvent as well as
+// OnEscape and OnFocusOut: the frame's close button reaches none of the others,
+// and left to itself it reports nothing.
+func NewFramedPanel(title string, w, h int) Window {
 	win := windowNew(WindowToplevel)
 	windowTitle(win, title) // the WM uses it for alt-tab, and for the title bar
 	windowSize(win, int32(w), int32(h))
@@ -1156,78 +1152,11 @@ func newPanelWindow(title string, w, h int) uintptr {
 	windowKeepAbove(win, 1)
 	windowStick(win)
 	// No gtk_window_set_position: a placement hint would overrule Move.
-	return win
-}
-
-// NewPanel creates an undecorated, always-on-top window that stays out of the
-// taskbar and the pager and follows the user across workspaces - a tray popup
-// rather than a document window.
-//
-// It is deliberately a normal toplevel with the decorations turned off, not a
-// GTK_WINDOW_POPUP and not a UTILITY or DOCK type hint. Those are override
-// redirect or otherwise unfocusable, and under Marco a window carrying any of
-// them receives no key events at all - which would leave the panel with no way
-// to be closed, since it has no title bar either. The two skip hints remove the
-// taskbar button on their own and leave focus intact.
-//
-// The caller is responsible for dismissal: see OnEscape and OnFocusOut.
-func NewPanel(title string, w, h int) Window {
-	win := newPanelWindow(title, w, h)
-	windowDecorated(win, 0)
 	return Window(win)
 }
 
-// NewFramedPanel is NewPanel with the window manager's frame left on: a title
-// bar, a border, and the manager's own close button. It is what the forecast
-// panel's system look is built from, where the panel is meant to read as an
-// ordinary application window instead of a sheet floating over the desktop.
-//
-// It differs from NewPanel in one call it does NOT make,
-// gtk_window_set_decorated(FALSE) - GTK's default is decorated, which is the same
-// default NewWindow already relies on for the settings and About windows. Every
-// hint newPanelWindow sets is kept, and none of them is a consequence of being
-// undecorated: a framed panel is still a tray popup, so it still belongs above
-// other windows, out of the taskbar and the pager, and stuck across workspaces.
-// The user asked for a title bar, not for a different window.
-//
-// Two caller obligations follow from the frame. Do not call SetTranslucent on
-// this window - an RGBA visual exists to composite the Modern look's alpha
-// against the desktop, and a framed window is opaque by definition. And wire
-// OnDeleteEvent: the frame's close button does not go through the same path as
-// the in-window one, and on its own it reports nothing.
-func NewFramedPanel(title string, w, h int) Window {
-	return Window(newPanelWindow(title, w, h))
-}
-
-// SetTranslucent gives the window an RGBA visual so CSS alpha composites
-// against the desktop instead of black, and reports whether it took effect.
-//
-// It must be called before the window is realised, because a visual is fixed
-// when the underlying GdkWindow is created - there is no way to add an alpha
-// channel to a window that is already on screen.
-//
-// The compositor check is the whole point. gdk_screen_get_rgba_visual returns
-// the same non-NULL depth-32 visual whether or not a compositing manager is
-// running, because the visual belongs to the X server rather than the session,
-// so testing it alone is exactly how an app ends up painting a solid black
-// rectangle where its transparency should be. Callers must style the window
-// from what this returns, not from what they hoped for.
-func (w Window) SetTranslucent() bool {
-	screen := screenDefault()
-	if screen == 0 || screenComposited(screen) == 0 {
-		return false
-	}
-	visual := screenRGBAVisual(screen)
-	if visual == 0 {
-		return false
-	}
-	widgetSetVisual(uintptr(w), visual)
-	return true
-}
-
-// OnEscape closes the window when Escape is pressed. For a panel with no title
-// bar this is the dismissal path that always works, whatever the window manager
-// does with focus.
+// OnEscape closes the window when Escape is pressed. It is the dismissal path
+// that always works, whatever the window manager does with focus.
 func (w Window) OnEscape(fn func()) {
 	ConnectEventScoped(uintptr(w), "key-press-event", func(event uintptr) bool {
 		var keyval uint32
@@ -1240,18 +1169,13 @@ func (w Window) OnEscape(fn func()) {
 }
 
 // OnDeleteEvent runs fn when the window manager asks the window to close: the
-// title bar's close button, the frame menu, or a session shutdown. Only a framed
-// window can reach it - an undecorated panel has nothing that emits it - so it is
-// the system look's counterpart to the in-window close button, which the title bar
-// replaces.
+// title bar's close button, the frame menu, or a session shutdown.
 //
 // It exists because the default behaviour reports nothing. GTK's own
 // "delete-event" handler destroys the window directly, which never runs the
 // panel's dismissal, so the position the user dragged the panel to is not written
-// out. That is harmless for an undecorated panel, where a window manager close is
-// something that essentially never happens, and wrong for a framed one, where the
-// title bar is the ordinary way the panel gets closed - it would lose the
-// remembered position on almost every close.
+// out. The title bar is the ordinary way the forecast panel gets closed, so
+// without this it would lose the remembered position on almost every close.
 //
 // The handler returns TRUE, which stops that default destroy. fn therefore owns
 // destroying the window: an fn that does not is a window whose close button does
@@ -1268,9 +1192,9 @@ func (w Window) OnDeleteEvent(fn func()) {
 }
 
 // OnFocusIn runs fn when the window gains focus. A panel uses it to decide that
-// a later focus LOSS is genuine: an undecorated window is not guaranteed to be
-// given focus when it is mapped, so a focus-out can arrive before the window was
-// ever focused at all.
+// a later focus LOSS is genuine: a window is not guaranteed to be given focus
+// when it is mapped, so a focus-out can arrive before the window was ever
+// focused at all.
 func (w Window) OnFocusIn(fn func()) {
 	ConnectEventScoped(uintptr(w), "focus-in-event", func(uintptr) bool {
 		fn()
@@ -1325,8 +1249,8 @@ var (
 )
 
 // DragOnPress makes a press anywhere on the window body start a window manager
-// move. It is how a panel with no title bar can be moved at all, and it works
-// whether or not the panel is pinned.
+// move, so the panel can be dragged by its content and not only by the title bar
+// the manager draws. It works whether or not the panel is pinned.
 //
 // gtk_widget_add_events is load-bearing: a GtkWindow does not ask GDK for button
 // presses, so without GDK_BUTTON_PRESS_MASK the handler is connected and then
@@ -1337,13 +1261,13 @@ var (
 // offsets into a GDK struct are how this package got burned once already, and the
 // accessors are what OnEscape already does with gdk_event_get_keyval.
 //
-// A press on the close button never arrives here, and that is precisely what
-// keeps the button working: a GtkButton has its own GdkWindow and consumes its
-// own press, so button-press-event on the toplevel only fires where no child
-// claimed the event. The drag therefore hit-tests nothing, and pressing the
-// close button cannot start a drag. For the same reason the handler returns
-// false: an event that reached the toplevel was refused by everything below it,
-// so there is nothing to be gained by stopping the chain here.
+// A press on a child that takes presses of its own never arrives here - a
+// GtkButton has its own GdkWindow and consumes its press - so button-press-event
+// on the toplevel only fires where no child claimed the event. The drag therefore
+// hit-tests nothing and cannot swallow a click meant for a control. For the same
+// reason the handler returns false: an event that reached the toplevel was
+// refused by everything below it, so there is nothing to be gained by stopping
+// the chain here.
 //
 // started, if not nil, runs just before a press is handed to the window manager.
 // It says that a press became a drag, which is NOT the same as saying the window
@@ -1421,14 +1345,10 @@ func dragReady() bool {
 // It answers, and Move accepts, the position of the window FRAME when the window
 // manager draws one, and of the window itself when it does not. That is what GTK
 // documents - the pair round-trips, so what Move is given is what Position gives
-// back - and it is the right behaviour for remembering a place. What it is not is
-// comparable between a decorated window and an undecorated one: measured under
-// Marco, the same forecast panel sitting in the same visible spot reads 500,550
-// undecorated and 499,528 framed, the difference being the frame extents
-// 1,1,22,1. A position saved in one appearance and reused in the other is
-// therefore off by the title bar, once, until the next drag corrects it. Storing
-// which look wrote it would fix that and is not worth a config field for a
-// one-time 22px nudge.
+// back - and it is the right behaviour for remembering a place. It is not
+// comparable across that difference, though: measured under Marco, the same
+// forecast panel sitting in the same visible spot reads 500,550 undecorated and
+// 499,528 framed, the frame extents being 1,1,22,1.
 //
 // The signature stays (int, int) rather than growing an ok result because that
 // 0,0 costs nothing: the caller reads this once when a drag begins and once when

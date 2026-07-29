@@ -35,10 +35,10 @@ const DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 // dark theme: COLOR_WINDOW answers white on a fully dark Windows 11, because the
 // dark theme was built beside the classic system colours rather than through
 // them. So a window that wants to look dark has no system colour to ask for and
-// must carry its own - which is exactly where the forecast panel went wrong. Its
-// system look picked the app's MODERN palette as the stand-in, a near-black
-// #1c1f26 with a blue cast, and ended up visibly darker than the About window
-// beside it. The right stand-in is what the rest of the program already paints.
+// must carry its own - which is exactly where the forecast panel went wrong. It
+// picked a near-black #1c1f26 with a blue cast of its own and ended up visibly
+// darker than the About window beside it. The right stand-in is what the rest of
+// the program already paints, which is what these are.
 //
 // The light theme needs none of this: there GetSysColor tells the truth, and the
 // panel asks it.

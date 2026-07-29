@@ -41,8 +41,6 @@ const (
 	ID_DEL_CFG           = 121
 	ID_INTERVAL          = 122
 	ID_PIN_FORECAST      = 123
-	ID_LOOK_MODERN       = 124
-	ID_LOOK_SYSTEM       = 125
 	WM_APP_SEARCH_RESULT = win.WM_APP + 1
 
 	// Trackbar messages lxn/win does not declare. There is deliberately no
@@ -71,13 +69,11 @@ const (
 	// content, so a window left too short simply clips whatever is at the bottom
 	// - which is the Save button.
 	//
-	// Where 790 comes from: createControls' running y reaches 740 at the button
+	// Where 734 comes from: createControls' running y reaches 684 at the button
 	// row, the buttons are 28 tall, and the remaining 22 is the bottom margin this
-	// layout has always left below them. It was 734 until the appearance group
-	// added its 56 - a 48-tall group box plus the 8 of clearance every group in
-	// this window is followed by - which pushed the button row down from 684.
+	// layout has always left below them.
 	settingsContentW = 440
-	settingsContentH = 790
+	settingsContentH = 734
 )
 
 var (
@@ -123,16 +119,6 @@ type setDlg struct {
 	// ForecastPinned defaults to TRUE, so reading it back from a control that was
 	// never created would silently turn off an option the user was never shown.
 	pinCheck win.HWND
-
-	// lookModern and lookSystem are kept for the same reason as pinCheck, and both
-	// halves are needed: BM_GETCHECK on a zero HWND answers 0, so a radio that was
-	// never created cannot be told from an unselected one, and reading the pair
-	// back would answer "modern" - moving a user who had chosen the system look
-	// back to Modern without either button ever appearing. Appearance defaults to
-	// "modern", so as with ForecastPinned the wrong answer is the plausible one and
-	// nothing else would show it up.
-	lookModern win.HWND
-	lookSystem win.HWND
 
 	// results belongs to the UI thread. pending is the hand-off from the
 	// search goroutine, which touches nothing else in here.
@@ -402,21 +388,6 @@ func (d *setDlg) createControls() {
 	d.group(d.lang.FontScaleGroup(), 12, y, 340, 48)
 	d.slider(86, y+14, 180, 24, ID_FONT_SCALE, d.cfg.FontScale, 1, 100)
 	d.fontScaleLabel = d.static(fmt.Sprintf("%d%%", d.cfg.FontScale), 272, y+16, 40, 20)
-	y += 56
-
-	// Directly above the pin checkbox: both settings are about the forecast panel
-	// and nothing else. Modern carries WS_GROUP so this pair is its own
-	// arrow-key group rather than an extension of whatever came before, and Modern
-	// is checked for every value that is not exactly "system" - an unrecognised
-	// value in the file means Modern, which is the same rule the panel applies.
-	d.group(d.lang.AppearanceGroup(), 12, y, 280, 48)
-	d.lookModern = d.radio(d.lang.LookModern(), 22, y+18, 90, 22, ID_LOOK_MODERN, d.cfg.Appearance != "system", true)
-	d.lookSystem = d.radio(d.lang.LookSystem(), 120, y+18, 160, 22, ID_LOOK_SYSTEM, d.cfg.Appearance == "system", false)
-	if d.lookModern == 0 || d.lookSystem == 0 {
-		// Logged here because onSave's handling of it is to keep the stored value,
-		// which is correct and completely silent.
-		log.Print("settings: appearance radios could not be created")
-	}
 	y += 56
 
 	// No group box round a single checkbox: a titled frame whose only content is
@@ -773,15 +744,6 @@ func (d *setDlg) onSave() {
 		nc.WindUnit = "ms"
 	}
 	nc.FontScale = d.getSlider(ID_FONT_SCALE)
-	// Only when both radios were actually built, for the reason lookModern and
-	// lookSystem record; nc carries the stored value forward when they were not.
-	if d.lookModern != 0 && d.lookSystem != 0 {
-		if d.isChecked(ID_LOOK_SYSTEM) {
-			nc.Appearance = "system"
-		} else {
-			nc.Appearance = "modern"
-		}
-	}
 	// Only when the box was actually built, for the reason pinCheck records; nc
 	// carries the stored value forward when it was not. The GTK backend guards its
 	// own checkbox the same way.

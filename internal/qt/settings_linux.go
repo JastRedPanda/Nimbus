@@ -40,7 +40,6 @@ const (
 	keyTheme
 	keyLang
 	keyScale
-	keyAppearance
 	keyPinned
 	keyInterval
 )
@@ -62,11 +61,6 @@ var (
 	windValues     = []string{"ms", "kmh"}
 	themeValues    = []string{"auto", "dark", "light"}
 	langValues     = []string{"en", "uk"}
-	// Modern first, and this is load-bearing: config.Index answers 0 for anything
-	// it does not recognise, so putting the system look first would make a
-	// hand-edited or downgraded file mean "system" - the opposite of the rule the
-	// panel applies to the same string.
-	lookValues = []string{"modern", "system"}
 )
 
 // settingsOpen is read and written only on the Qt thread.
@@ -205,10 +199,6 @@ func buildForm(cfg *config.Config, onFontScale func(int), result chan<- *config.
 
 	qtFormSlider(keyScale, l.FontScaleGroup(), 1, 100, int32(cfg.FontScale))
 
-	// Directly above the pin checkbox: both settings are about the forecast panel
-	// and nothing else, so they belong next to each other.
-	choice(keyAppearance, l.AppearanceGroup(), []string{l.LookModern(), l.LookSystem()},
-		config.Index(cfg.Appearance, lookValues...))
 	check(keyPinned, l.PinForecast(), cfg.ForecastPinned)
 
 	combo(keyInterval, l.UpdateInterval(), config.IntervalLabels(),
@@ -271,7 +261,6 @@ func adopt(cfg *config.Config, values map[int64]string, action int) *config.Conf
 		nc.WindUnit = choose(values[keyWind], cfg.WindUnit, windValues)
 		nc.IconTheme = choose(values[keyTheme], cfg.IconTheme, themeValues)
 		nc.Language = choose(values[keyLang], cfg.Language, langValues)
-		nc.Appearance = choose(values[keyAppearance], cfg.Appearance, lookValues)
 		if v, err := strconv.Atoi(values[keyScale]); err == nil {
 			nc.FontScale = v
 		}

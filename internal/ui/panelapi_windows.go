@@ -43,75 +43,10 @@ var (
 	panelUser32 = syscall.NewLazyDLL("user32.dll")
 	panelGdi32  = syscall.NewLazyDLL("gdi32.dll")
 
-	procUpdateLayeredWindow = panelUser32.NewProc("UpdateLayeredWindow")
-	procMonitorFromRect     = panelUser32.NewProc("MonitorFromRect")
-	procAdjustWindowRectEx  = panelUser32.NewProc("AdjustWindowRectEx")
-	procGetTextFace         = panelGdi32.NewProc("GetTextFaceW")
+	procMonitorFromRect    = panelUser32.NewProc("MonitorFromRect")
+	procAdjustWindowRectEx = panelUser32.NewProc("AdjustWindowRectEx")
+	procGetTextFace        = panelGdi32.NewProc("GetTextFaceW")
 )
-
-// dwFlags for UpdateLayeredWindow, from winuser.h.
-//
-// ULW_ALPHA is the only one that means "use the per-pixel alpha in the source
-// bitmap"; ULW_OPAQUE, "draw an opaque layered window", puts the same bitmap up
-// with the alpha channel ignored, and is what the panel asks for on a display
-// too shallow to composite alpha - see perPixelAlpha. ULW_COLORKEY, the third,
-// is not wanted here: it makes one exact RGB value transparent, which cannot
-// express an antialiased edge.
-//
-// Note that ULW_ALPHA degrades to ULW_OPAQUE by itself on such a display,
-// silently and successfully, which is precisely why the panel decides which
-// palette to draw BEFORE it calls this rather than reading the return value.
-const (
-	ulwAlpha  = 0x00000002
-	ulwOpaque = 0x00000004
-)
-
-// BLENDFUNCTION.BlendOp. lxn/win declares AC_SRC_ALPHA but not AC_SRC_OVER,
-// and about_windows.go has its own copy under a different name; this one is
-// deliberately independent so neither file can break the other.
-const blendOpSrcOver = 0x00
-
-// updateLayeredWindow wraps
-//
-//	BOOL UpdateLayeredWindow(HWND hWnd, HDC hdcDst, POINT *pptDst, SIZE *psize,
-//	                         HDC hdcSrc, POINT *pptSrc, COLORREF crKey,
-//	                         BLENDFUNCTION *pblend, DWORD dwFlags)
-//
-// It moves, resizes and repaints the window in one call: pptDst is the new
-// position in SCREEN coordinates, psize the new size, pptSrc the origin within
-// the source DC. hdcDst may be 0, which asks for the default palette.
-//
-// This is the only way to get per-pixel alpha onto a window.
-// SetLayeredWindowAttributes is the trap next door: its bAlpha is "similar to
-// the SourceConstantAlpha member of BLENDFUNCTION", i.e. one opacity for the
-// whole window including the text, and calling it even once permanently breaks
-// UpdateLayeredWindow for that window until WS_EX_LAYERED is cleared and set
-// again.
-func updateLayeredWindow(
-	hwnd win.HWND, hdcDst win.HDC, ptDst *win.POINT, size *win.SIZE,
-	hdcSrc win.HDC, ptSrc *win.POINT, crKey win.COLORREF,
-	blend *win.BLENDFUNCTION, flags uint32,
-) (bool, syscall.Errno) {
-	if err := procUpdateLayeredWindow.Find(); err != nil {
-		return false, syscall.EINVAL
-	}
-	ret, _, errno := syscall.SyscallN(procUpdateLayeredWindow.Addr(),
-		uintptr(hwnd),
-		uintptr(hdcDst),
-		uintptr(unsafe.Pointer(ptDst)),
-		uintptr(unsafe.Pointer(size)),
-		uintptr(hdcSrc),
-		uintptr(unsafe.Pointer(ptSrc)),
-		uintptr(crKey),
-		uintptr(unsafe.Pointer(blend)),
-		uintptr(flags),
-	)
-	runtime.KeepAlive(ptDst)
-	runtime.KeepAlive(size)
-	runtime.KeepAlive(ptSrc)
-	runtime.KeepAlive(blend)
-	return ret != 0, errno
-}
 
 // monitorFromRect wraps HMONITOR MonitorFromRect(LPCRECT lprc, DWORD dwFlags).
 //

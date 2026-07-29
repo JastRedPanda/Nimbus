@@ -110,12 +110,11 @@ void nimbus_qt_icon(const void *data, int len);
 // begin, so an abandoned half-built panel cannot leak into the next one. All four
 // must be called on the Qt thread, which means from inside a nimbus_qt_invoke.
 
-// nimbus_qt_forecast_begin starts a new panel. system picks an ordinary framed
-// application window over the translucent undecorated sheet. dark is 1 for the
-// dark palette, 0 for the light one and -1 to decide from the desktop theme; it
-// is ignored entirely in the system look, which takes its colours from the theme
-// by having none of its own.
-void nimbus_qt_forecast_begin(const char *title, int system, int dark);
+// nimbus_qt_forecast_begin starts a new panel. The title is all it takes, and
+// that is the point: the panel is an ordinary application window - the manager's
+// frame, the desktop theme's colours - that merely stays above the others and off
+// the taskbar, so it has no look for the caller to choose between.
+void nimbus_qt_forecast_begin(const char *title);
 
 // nimbus_qt_forecast_header adds one column caption. align is NIMBUS_QT_ALIGN_*
 // and governs the whole column, caption and cells alike, so a column reads as one

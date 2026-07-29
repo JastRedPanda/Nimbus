@@ -463,33 +463,6 @@ func (l Lang) FontScalePct() string {
 	return "%"
 }
 
-// AppearanceGroup, LookSystem and LookModern title the forecast panel's look
-// and its two options. They sit next to PinForecast because both settings are
-// about the same window, and the settings forms place them next to each other.
-func (l Lang) AppearanceGroup() string {
-	if l == UK {
-		return "Вигляд"
-	}
-	return "Appearance"
-}
-
-func (l Lang) LookSystem() string {
-	if l == UK {
-		return "Системний вигляд"
-	}
-	return "System look"
-}
-
-// LookModern is the same word in both languages: it names the app's own look
-// rather than describing it, and "Модерн" would read as a translation of a
-// proper noun.
-func (l Lang) LookModern() string {
-	if l == UK {
-		return "Modern"
-	}
-	return "Modern"
-}
-
 func (l Lang) PinForecast() string {
 	if l == UK {
 		return "Закривати лише кліком по іконці"

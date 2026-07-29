@@ -134,79 +134,6 @@ func TestLoadConfigWithoutForecastKeys(t *testing.T) {
 	}
 }
 
-func TestDefaultAppearanceIsSystem(t *testing.T) {
-	// Modern is today's panel, so a fresh config must ask for it: an empty string
-	// here would reach the backends as "no look chosen" and rely on every one of
-	// them treating that as modern, instead of the config saying which it is.
-	if got := Default().Appearance; got != "system" {
-		t.Errorf("Default().Appearance = %q, want \"system\"", got)
-	}
-}
-
-// TestAppearanceSystemRoundTrip pins the half that a struct tag can break: the
-// non-default value has to reach the disk and come back. Load unmarshals over
-// Default(), so anything that stops "system" being written - an omitempty added
-// later, a renamed key - shows up as the panel quietly reverting to Modern on
-// the next start, with nothing in the settings window to explain it.
-func TestAppearanceSystemRoundTrip(t *testing.T) {
-	redirectConfigDir(t)
-
-	cfg := Default()
-	cfg.Appearance = "system"
-	if err := cfg.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	path, err := configPath()
-	if err != nil {
-		t.Fatalf("configPath: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if !strings.Contains(string(data), `"appearance"`) {
-		t.Errorf("saved config has no appearance key:\n%s", data)
-	}
-
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.Appearance != "system" {
-		t.Errorf("Appearance = %q after saving \"system\"", got.Appearance)
-	}
-}
-
-// TestLoadConfigWithoutAppearanceLoadsSystem covers the upgrade path: a file
-// written before the option existed has no appearance key, and the panel must
-// look exactly as it did before rather than switching to the system look because
-// the field arrived empty.
-func TestLoadConfigWithoutAppearanceLoadsSystem(t *testing.T) {
-	dir := redirectConfigDir(t)
-	if err := os.MkdirAll(filepath.Join(dir, "Nimbus"), 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	path, err := configPath()
-	if err != nil {
-		t.Fatalf("configPath: %v", err)
-	}
-	old := `{"latitude":50.4501,"longitude":30.5234,"city_name":"Kyiv","update_interval":10,` +
-		`"units":"celsius","pressure_unit":"hpa","wind_unit":"ms","icon_theme":"auto",` +
-		`"language":"en","font_scale":100,"forecast_pinned":true}`
-	if err := os.WriteFile(path, []byte(old), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Appearance != "system" {
-		t.Errorf("Appearance = %q for a config that predates the field, want the \"system\" from Default()", cfg.Appearance)
-	}
-}
-
 func TestForecastPositionRoundTrip(t *testing.T) {
 	redirectConfigDir(t)
 
@@ -396,26 +323,5 @@ func TestForecastPositionAbsentLoadsNil(t *testing.T) {
 	}
 	if got.ForecastX != nil || got.ForecastY != nil {
 		t.Errorf("position = (%v, %v) for a never-dragged panel, want (nil, nil)", got.ForecastX, got.ForecastY)
-	}
-}
-
-// TestLoadNormalisesAnUnknownAppearance pins the rule that keeps the vocabulary in
-// one place: the file is hand-editable, and a value neither panel knows must come
-// back as the default rather than silently selecting the other look.
-func TestLoadNormalisesAnUnknownAppearance(t *testing.T) {
-	redirectConfigDir(t)
-
-	cfg := Default()
-	cfg.Appearance = "Modern" // capitalised: a plausible hand edit, and not a value we know
-	if err := cfg.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.Appearance != Default().Appearance {
-		t.Errorf("Appearance = %q for an unrecognised value, want the default %q",
-			got.Appearance, Default().Appearance)
 	}
 }
