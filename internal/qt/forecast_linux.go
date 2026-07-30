@@ -4,6 +4,7 @@ package qt
 
 import (
 	"log"
+	"time"
 
 	"github.com/JastRedPanda/Nimbus/internal/fonts"
 	"github.com/JastRedPanda/Nimbus/internal/gui"
@@ -36,7 +37,10 @@ var colAlign = [...]int32{alignStart, alignCenter, alignEnd, alignEnd, alignEnd}
 
 // panelUp says a panel is on screen right now. Read and written only on the Qt
 // thread.
-var panelUp bool
+var (
+	panelUp      bool
+	forecastStop chan struct{}
+)
 
 // Forecast opens the panel, or closes the one that is up. It returns
 // immediately: the forecast is fetched on its own goroutine because the caller
@@ -56,18 +60,44 @@ func (backend) Forecast(req gui.Forecast) {
 		if <-consumed {
 			return
 		}
-		data, err := weather.FetchDaily(req.Lat, req.Lon)
+
 		l := i18n.ParseLang(req.Lang)
-		if err != nil {
-			log.Printf("qt: forecast fetch failed: %v", err)
-		} else if len(data) == 0 {
-			log.Print("qt: forecast fetch returned no days")
+		_, cachedDaily := weather.Cached(req.Lat, req.Lon)
+		if cachedDaily == nil {
+			log.Print("qt: no cached data, waiting for first fetch")
+			select {
+			case <-weather.UpdateCh:
+				_, cachedDaily = weather.Cached(req.Lat, req.Lon)
+			case <-time.After(5 * time.Second):
+				log.Print("qt: timed out waiting for first weather data")
+				return
+			}
+			if cachedDaily == nil {
+				return
+			}
 		}
-		if err != nil || len(data) == 0 {
-			invoke(func() { qtError(appName, l.ForecastFailed()) })
-			return
+
+		invoke(func() { buildPanel(cachedDaily, req, l) })
+
+		if forecastStop != nil {
+			close(forecastStop)
+			forecastStop = nil
 		}
-		invoke(func() { buildPanel(data, req, l) })
+		stop := make(chan struct{})
+		forecastStop = stop
+		go func() {
+			for {
+				select {
+				case <-weather.UpdateCh:
+					_, cachedDaily := weather.Cached(req.Lat, req.Lon)
+					if cachedDaily != nil {
+						invoke(func() { refreshPanel(cachedDaily, req, i18n.ParseLang(req.Lang)) })
+					}
+				case <-stop:
+					return
+				}
+			}
+		}()
 	}()
 }
 
@@ -90,6 +120,15 @@ func applyTheme(theme string) {
 
 // canTheme reports whether this shim can act on the theme option.
 func canTheme() bool { return qtCanTheme() != 0 }
+
+// refreshPanel rebuilds the panel with fresh data. Qt thread only.
+func refreshPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
+	if !panelUp {
+		return
+	}
+	qtPanelClose()
+	buildPanel(data, req, l)
+}
 
 func buildPanel(data []weather.DailyForecast, req gui.Forecast, l i18n.Lang) {
 	if panelUp {

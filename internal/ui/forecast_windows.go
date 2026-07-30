@@ -327,53 +327,30 @@ func showForecast(req gui.Forecast) {
 	go func() {
 		l := i18n.ParseLang(req.Lang)
 
-		// Before the fetch, so a click that only closes the panel does not spend
-		// ten seconds on a result it will discard.
 		if closeOpenPanel() {
 			return
 		}
 
-		// Показываем кеш мгновенно, если есть.
 		_, cachedDaily := weather.Cached(req.Lat, req.Lon)
-		if cachedDaily != nil {
-			p := newPanel(cachedDaily, req, l)
-			p.interval = req.Interval
-			go p.run(at, haveAt)
+		if cachedDaily == nil {
+			log.Print("forecast: no cached data, waiting for first fetch")
+			select {
+			case <-weather.UpdateCh:
+				_, cachedDaily = weather.Cached(req.Lat, req.Lon)
+			case <-time.After(5 * time.Second):
+				log.Print("forecast: timed out waiting for first weather data")
+				return
+			}
+			if cachedDaily == nil {
+				return
+			}
+			if closeOpenPanel() {
+				return
+			}
 		}
 
-		// Фоновое обновление.
-		_, daily, err := weather.FetchAll(req.Lat, req.Lon)
-		if err != nil || len(daily) == 0 {
-			if err != nil {
-				log.Printf("forecast: fetch failed: %v", err)
-			} else {
-				log.Printf("forecast: fetch returned no days")
-			}
-			// Если окно не открыто — показываем ошибку.
-			panelMu.Lock()
-			busy := panelBusy
-			panelMu.Unlock()
-			if !busy {
-				showError(l.ForecastFailed())
-			} else {
-				log.Printf("forecast: keeping stale cached data")
-			}
-			return
-		}
-
-		// Если окно уже открыто (из кеша) — обновляем.
-		panelMu.Lock()
-		hwnd := panelHWND
-		panelMu.Unlock()
-		if hwnd != 0 {
-			// Сохраняем новые данные в кеш
-			weather.Store(nil, daily, req.Lat, req.Lon)
-			win.PostMessage(hwnd, wmRefresh, 0, 0)
-		} else {
-			p := newPanel(daily, req, l)
-			p.interval = req.Interval
-			p.run(at, haveAt)
-		}
+		p := newPanel(cachedDaily, req, l)
+		go p.run(at, haveAt)
 	}()
 }
 
@@ -522,7 +499,6 @@ type panel struct {
 	// so an ungated line there is not a log entry but a log flood.
 	paintFailed bool
 
-	interval    time.Duration
 	refreshStop chan struct{}
 }
 
@@ -1015,10 +991,8 @@ func (p *panel) run(at win.POINT, haveAt bool) {
 		log.Printf("forecast: could not take the foreground; the panel is up but not activated")
 	}
 
-	if p.interval > 0 {
-		p.refreshStop = make(chan struct{})
-		go p.refreshLoop()
-	}
+	p.refreshStop = make(chan struct{})
+	go p.refreshLoop()
 
 	var msg win.MSG
 	for {
@@ -1605,17 +1579,9 @@ func (p *panel) refresh() {
 }
 
 func (p *panel) refreshLoop() {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
 	for {
 		select {
-		case <-ticker.C:
-			_, daily, err := weather.FetchAll(p.req.Lat, p.req.Lon)
-			if err != nil {
-				log.Printf("forecast: auto-refresh failed: %v", err)
-				continue
-			}
-			weather.Store(nil, daily, p.req.Lat, p.req.Lon)
+		case <-weather.UpdateCh:
 			if p.hwnd != 0 {
 				win.PostMessage(p.hwnd, wmRefresh, 0, 0)
 			}

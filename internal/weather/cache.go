@@ -15,6 +15,12 @@ type cacheEntry struct {
 var (
 	entry cacheEntry
 	mu    sync.RWMutex
+
+	// UpdateCh сигнализируется каждый раз, когда Store() записывает свежие
+	// данные. Буфер 1, чтобы медленный получатель не блокировал запись:
+	// пропущенный сигнал не страшен, следующий тикер или таймер подхватит
+	// актуальные данные из Cached().
+	UpdateCh = make(chan struct{}, 1)
 )
 
 func Cached(lat, lon float64) (current *WeatherData, daily []DailyForecast) {
@@ -38,4 +44,9 @@ func Store(current *WeatherData, daily []DailyForecast, lat, lon float64) {
 	entry.fetchedAt = now
 	entry.lat = lat
 	entry.lon = lon
+
+	select {
+	case UpdateCh <- struct{}{}:
+	default:
+	}
 }

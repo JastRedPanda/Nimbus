@@ -143,9 +143,22 @@ func showForecast(req gui.Forecast) {
 
 		l := i18n.ParseLang(req.Lang)
 
-		// Показываем кеш мгновенно, если есть.
 		_, cachedDaily := weather.Cached(req.Lat, req.Lon)
-		if cachedDaily != nil && forecastWindow == 0 {
+		if cachedDaily == nil {
+			log.Print("forecast: no cached data, waiting for first fetch")
+			select {
+			case <-weather.UpdateCh:
+				_, cachedDaily = weather.Cached(req.Lat, req.Lon)
+			case <-time.After(5 * time.Second):
+				log.Print("forecast: timed out waiting for first weather data")
+				return
+			}
+			if cachedDaily == nil {
+				return
+			}
+		}
+
+		if forecastWindow == 0 {
 			gtk.Invoke(func() {
 				if forecastWindow == 0 {
 					buildForecast(cachedDaily, req, l, s.at)
@@ -153,58 +166,24 @@ func showForecast(req gui.Forecast) {
 			})
 		}
 
-		// Фоновое обновление: загружаем свежие данные.
-		_, daily, err := weather.FetchAll(req.Lat, req.Lon)
-		schedErr := gtk.Invoke(func() {
-			if err != nil {
-				log.Printf("forecast: fetch failed: %v", err)
-			} else if len(daily) == 0 {
-				log.Print("forecast: fetch returned no days")
-			}
-			if err != nil || len(daily) == 0 {
-				// Если окно уже показано из кеша, просто логируем.
-				if forecastWindow == 0 {
-					ensureAppIcon()
-					gtk.ShowError(appName, l.ForecastFailed(), "", l.CloseLabel())
-				}
-				return
-			}
-			if forecastWindow == 0 {
-				buildForecast(daily, req, l, s.at)
-			} else {
-				updateForecast(daily)
-			}
-		})
-		if schedErr != nil {
-			log.Printf("forecast: cannot reach the GTK loop: %v", schedErr)
-			return
-		}
-		if err != nil || len(daily) == 0 {
-			return
-		}
-
-		// Автообновление по таймеру.
-		if req.Interval <= 0 {
-			return
+		if forecastStop != nil {
+			close(forecastStop)
+			forecastStop = nil
 		}
 		stop := make(chan struct{})
 		forecastStop = stop
 		go func() {
-			ticker := time.NewTicker(req.Interval)
-			defer ticker.Stop()
 			for {
 				select {
-				case <-ticker.C:
-					_, newDaily, fetchErr := weather.FetchAll(req.Lat, req.Lon)
+				case <-weather.UpdateCh:
 					gtk.Invoke(func() {
 						if forecastWindow == 0 {
 							return
 						}
-						if fetchErr != nil {
-							log.Printf("forecast: auto-refresh failed: %v", fetchErr)
-							return
+						_, cachedDaily := weather.Cached(req.Lat, req.Lon)
+						if cachedDaily != nil {
+							updateForecast(cachedDaily)
 						}
-						updateForecast(newDaily)
 					})
 				case <-stop:
 					return

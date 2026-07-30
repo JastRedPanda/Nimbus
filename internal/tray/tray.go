@@ -1,9 +1,11 @@
 package tray
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"fyne.io/systray"
 	"github.com/JastRedPanda/Nimbus/internal/config"
@@ -45,10 +47,11 @@ type app struct {
 	lang     i18n.Lang
 	lastData *weather.WeatherData
 
-	mForecast *systray.MenuItem
-	mSettings *systray.MenuItem
-	mAbout    *systray.MenuItem
-	mQuit     *systray.MenuItem
+	mForecast     *systray.MenuItem
+	mSettings     *systray.MenuItem
+	mAbout        *systray.MenuItem
+	mQuit         *systray.MenuItem
+	refreshCancel context.CancelFunc
 }
 
 func newApp(cfg *config.Config) *app {
@@ -70,6 +73,7 @@ func (a *app) ready() {
 	a.mQuit = systray.AddMenuItem("Quit", "Quit Nimbus")
 
 	a.fetchAndUpdate()
+	a.startRefreshLoop()
 	go a.handleMenu()
 }
 
@@ -105,14 +109,40 @@ func (a *app) handleMenu() {
 }
 
 func (a *app) fetchAndUpdate() {
-	data, err := weather.Fetch(a.cfg.Latitude, a.cfg.Longitude)
+	current, _, err := weather.FetchAll(a.cfg.Latitude, a.cfg.Longitude)
 	if err != nil {
 		log.Printf("Weather fetch error: %v", err)
 		systray.SetTooltip(fmt.Sprintf("Nimbus — error: %v", err))
 		return
 	}
-	a.lastData = data
+	a.lastData = current
 	a.updateIcon(a.cfg.FontScale)
+}
+
+func (a *app) startRefreshLoop() {
+	a.stopRefreshLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.refreshCancel = cancel
+	interval := a.cfg.Interval()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				a.fetchAndUpdate()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (a *app) stopRefreshLoop() {
+	if a.refreshCancel != nil {
+		a.refreshCancel()
+		a.refreshCancel = nil
+	}
 }
 
 func (a *app) updateIcon(fontScale int) {
@@ -276,5 +306,6 @@ func (a *app) openSettings() {
 			a.lang = i18n.ParseLang(nc.Language)
 		}
 		a.fetchAndUpdate()
+		a.startRefreshLoop()
 	}()
 }
