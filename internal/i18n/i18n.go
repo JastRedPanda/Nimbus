@@ -570,3 +570,10 @@ func (l Lang) CloseLabel() string {
 	}
 	return "Close"
 }
+
+func (l Lang) NetworkError() string {
+	if l == UK {
+		return "Немає підключення до інтернету або з'єднання нестабільне"
+	}
+	return "No internet connection or connection is unstable"
+}

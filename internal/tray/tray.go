@@ -52,6 +52,8 @@ type app struct {
 	mAbout        *systray.MenuItem
 	mQuit         *systray.MenuItem
 	refreshCancel context.CancelFunc
+
+	fetchErrors int
 }
 
 func newApp(cfg *config.Config) *app {
@@ -113,8 +115,15 @@ func (a *app) fetchAndUpdate() {
 	if err != nil {
 		log.Printf("Weather fetch error: %v", err)
 		systray.SetTooltip(fmt.Sprintf("Nimbus — error: %v", err))
+		a.fetchErrors++
+		if a.fetchErrors >= 10 {
+			l := i18n.ParseLang(a.cfg.Language)
+			gui.Current().Error("Nimbus", l.NetworkError())
+			a.fetchErrors = 0
+		}
 		return
 	}
+	a.fetchErrors = 0
 	a.lastData = current
 	a.updateIcon(a.cfg.FontScale)
 }

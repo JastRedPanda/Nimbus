@@ -69,10 +69,14 @@ func (backend) Forecast(req gui.Forecast) {
 			case <-weather.UpdateCh:
 				_, cachedDaily = weather.Cached(req.Lat, req.Lon)
 			case <-time.After(5 * time.Second):
-				log.Print("qt: timed out waiting for first weather data")
-				return
+				log.Print("qt: first fetch timed out, probing API directly")
+				_, daily, err := weather.FetchAll(req.Lat, req.Lon)
+				if err == nil && len(daily) > 0 {
+					_, cachedDaily = weather.Cached(req.Lat, req.Lon)
+				}
 			}
 			if cachedDaily == nil {
+				gui.Current().Error("Nimbus", l.NetworkError())
 				return
 			}
 		}
